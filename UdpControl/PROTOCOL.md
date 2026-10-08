@@ -1,0 +1,81 @@
+# UDP 控制协议 v1
+
+UTF-8 JSON，一个数据报一个对象，请求最多 8192 字节。默认目的地 `127.0.0.1:5005`。客户端整个会话须保持同一个 UDP socket / 来源端口；所有请求带 `v:1` 和唯一字符串 `id`（1～64 字符）。配置 auth_key 时每个请求还须带 `auth_key`。
+
+## 获取控制权与只读状态
+
+```json
+{"v":1,"id":"h1","type":"hello","claim":true}
+```
+
+返回 ack 的 session 后，后续控制请求均携带它。`claim:false` 只观察、不占控制权；`status` 查询也不占权。独占权空闲 5 秒无有效会话请求后释放；电机仍在扫描/使能/停止时不能被另一客户端接管。
+
+```json
+{"v":1,"type":"ack","id":"h1","ok":true,"session":"随机字符串","control_seq":-1,"owns_control":true,"server_id":"本次后台实例","state_serial":100,"state":{"phase":"idle","enabled":false,"orders":[],"run_id":null}}
+```
+
+state 的 phase 是 `idle / scanning / enabling / enabled / stopping / fault`。enabled 是电机反馈，不是用户开启意图。所有状态响应还携带随机 server_id，后台进程每次启动时更换。state_serial 在该 server_id 内严格递增；客户端只采用当前服务器更大序号的 state，避免迟到反馈使状态倒退。重新 hello 时采用返回的 server_id，并重置旧反馈序号。后台主动以约 10 Hz 向控制客户端推送 `{"v":1,"type":"state","server_id":"...","state_serial":101,"state":{...}}`。
+
+## 扫描与使能
+
+以下操作需要 session 和严格递增的 control_seq（0～2^53-1）：`adapters / scan / enable / release`。从 hello 返回的 control_seq+1 开始递增。重发同一个请求时保留 id、control_seq 和内容；失败后的新请求换 id 并增加 control_seq。
+
+```json
+{"v":1,"id":"a1","type":"adapters","session":"...","control_seq":0}
+```
+
+返回 `adapters:[{"name":"\\Device\\NPF_{...}","description":"..."}]`。
+
+```json
+{"v":1,"id":"s1","type":"scan","session":"...","control_seq":1,"adapter":"\\Device\\NPF_{...}"}
+```
+
+adapter 可省略，使用后台当前配置。扫描为异步请求；轮询 status 或接收推送，等 phase=idle 后读取 state.devices。链路位置 order（1 起始）作为控制编号，ID 0 也不等于链路位置 0。
+
+```json
+{"v":1,"id":"e1","type":"enable","session":"...","control_seq":2,"orders":[1,2,3],"rpm":80,"acceleration_rpm_s":120}
+```
+
+orders 须为不同的升序链路位置，不限定三轴。返回 `run_id`，立即开始心跳，直到 phase=enabled 再提交目标。使能不会自动移动，也不会自动执行上一运行目标。rpm 默认 60，acceleration_rpm_s 默认 120；两者为正的有限数值，整段运行固定，修改需要先停止。
+
+## 心跳与目标
+
+从 enable 返回的 run_id 开始新运行。心跳和目标各自使用严格递增 seq（0～2^53-1）；可共用全局递增计数，也可分开计数。后台分别记住两种消息的最后 seq。推荐持续 30～60 Hz 目标，目标静止时至少每 100 ms 发送 heartbeat。
+
+```json
+{"v":1,"id":"hb1","type":"heartbeat","session":"...","run_id":"...","seq":0}
+```
+
+```json
+{"v":1,"id":"t1","type":"target","session":"...","run_id":"...","seq":1,"targets_deg":[5,0,-5]}
+```
+
+targets_deg 的数量与 orders 相同，依次为相对各轴本次使能起点的绝对偏移，单位 °；可正、负、零。相同目标不累加、也不重新触发轨迹。目标会覆盖尚未下发的旧目标，不积压执行队列。角度累计不设限，但单次剩余位移须可由驱动器原生格式表示。
+
+ack 的 `accepted:true` 表示新序号通过验证；`accepted:false` 表示重复/乱序报文被忽略，不更新目标或心跳。无效请求返回 `ok:false,error:"原因"`，不改变已接受目标，不续期；不能当作已执行。心跳超时默认 0.5 秒，准备阶段也计时，超时后即使后来收到新 seq 也不能恢复该 run。
+
+## 停止、释放和重启
+
+```json
+{"v":1,"id":"d1","type":"disable","session":"...","run_id":"..."}
+```
+
+disable 不要求 seq，匹配当前 run_id 就优先请求停止。ack 仅表示停止请求已经接受；等待 phase=idle/fault，再核对 state.result.all_disabled 和 cleanup_errors。旧 run_id 的 disable 被拒绝。停止后 target/heartbeat 不可重新使能。
+
+```json
+{"v":1,"id":"r1","type":"release","session":"...","control_seq":3}
+```
+
+停止/扫描结束后才能释放。下一个客户端重新 hello，获取新的 session。干净停止后同一客户端可使用新 id/control_seq 再 enable；fault 必须重新 scan 通过才可 enable。service process 重启后必须重新 hello，旧 session 不可用。
+
+## ACK 和反馈
+
+所有已解析且带合法请求标识的报文都会返回同 id 的 ack；响应不保证送达，客户端在超时后重发**完全相同**的报文。后台有限去重缓存保留最近 256 个控制请求；缓存淘汰后旧 control_seq / target seq 仍禁止重复执行。hello、status 可随时重新查询。
+
+```json
+{"v":1,"id":"q1","type":"status"}
+```
+
+完整 state 还包括 adapter、message、heartbeat_timeout_s、orders、targets_deg、seq、devices、axes、result、stop_reason。axes 项含 order、position（原始计数）、enabled、error_code、travel_degrees（累计偏移）。result 含 stopped、error、all_disabled、cleanup_errors、log_path、stop_reason 和 PDO 恢复统计。feedback 中 seq 是所接收的最大序号，**不表示到位**。具体轴位置以 axes 为准。
+
+不确定 enable 是否执行时先查 state.run_id 和 phase；若尚在准备，保持当前 run 心跳或明确停止。不要用不同 id 重发 enable。停止失败或反馈失联时不能仅凭 ack 宣称电机已关闭。

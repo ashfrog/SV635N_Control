@@ -1,0 +1,2 @@
+# The UDP GUI/SDK use only Python's standard library, including Tkinter.
+# No EtherCAT, tray, or imaging packages are required on the client computer.

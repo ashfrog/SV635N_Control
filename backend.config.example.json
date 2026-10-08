@@ -1,0 +1,7 @@
+{
+  "host": "127.0.0.1",
+  "port": 5005,
+  "adapter": "\\Device\\NPF_{89B39964-A086-4A5D-BC55-D5804AE703C6}",
+  "heartbeat_timeout_s": 0.5,
+  "auth_key": ""
+}
