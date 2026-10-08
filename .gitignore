@@ -5,3 +5,4 @@ logs/
 settings.json
 UdpControl/config.json
 backend.config.json
+*.7z
