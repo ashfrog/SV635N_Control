@@ -1,0 +1,3 @@
+# Only for the old direct-NIC app.py/cli.py and their regression tests.
+-r requirements.txt
+pysoem==1.1.13

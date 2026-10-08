@@ -51,10 +51,10 @@ class DebugWindow:
         self.stop_button.pack(side='right')
         network = ttk.Frame(frame)
         network.pack(fill='x', pady=12)
-        ttk.Label(network, text='EtherCAT 网卡').pack(side='left')
+        ttk.Label(network, text='PCIe 控制卡').pack(side='left')
         self.adapter_box = ttk.Combobox(network, textvariable=self.adapter, state='readonly', width=65)
         self.adapter_box.pack(side='left', padx=8, fill='x', expand=True)
-        self.adapters_button = ttk.Button(network, text='刷新网卡', command=self.adapters)
+        self.adapters_button = ttk.Button(network, text='刷新控制卡', command=self.adapters)
         self.adapters_button.pack(side='left')
         self.scan_button = ttk.Button(network, text='扫描电机', command=self.scan)
         self.scan_button.pack(side='left', padx=(8, 0))
@@ -217,7 +217,12 @@ class DebugWindow:
         self.slider.configure(state='normal' if controllable else 'disabled')
         if not controllable:
             self.latest_target=None
+        inputs = state.get('input_configuration', {})
+        input_text = ' · '.join(label for key, label in
+            (('limit_inputs_connected', '限位未接入'), ('emg_input_connected', '急停未接入（调试）'))
+            if inputs.get(key) is False)
         self.status.set(f"{state.get('phase','?')} · {state.get('message','')} · " +
+                        (input_text + ' · ' if input_text else '') +
                         ('调试面板持有控制权' if owner else '只读监视；外部程序可获取控制权'))
 
     def poll(self):

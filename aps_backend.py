@@ -1,0 +1,539 @@
+"""ADLINK PCIe-8332 hardware owner. APS calls run only on the motor worker.
+
+ABI/constants follow the installed APS SDK headers and APS FunctionLibrary V2.1.
+Synchronous API mode waits for the card's acknowledgement, not motion completion.
+The card generates EtherCAT trajectories; Python does not transmit PDO cycles.
+"""
+import ctypes as C
+from collections import deque
+from dataclasses import dataclass
+from datetime import datetime
+import json
+import logging
+import math
+import os
+from pathlib import Path
+import threading
+import time
+
+from control_common import ControlError, Stopped, Device, adapter_lock
+
+LOG = logging.getLogger(__name__)
+I32, U32, U16, U8, F64 = C.c_int32, C.c_uint32, C.c_uint16, C.c_uint8, C.c_double
+PI32, PU32, PF64 = C.POINTER(I32), C.POINTER(U32), C.POINTER(F64)
+CARD_PCIE_8332, BUS_OP = 25, 6
+SVON, ONLINE, MDN, ASTP = 1 << 7, 1 << 24, 1 << 5, 1 << 16
+ALM, PEL, MEL, EMG = 1, 2, 4, 16
+IO_FAULTS = ALM | PEL | MEL | EMG | (1 << 10) | (1 << 11) | (1 << 12)
+LIMIT_MAP_EN = 0x5D
+SD_DEC = 7
+
+
+class AsyncCall(C.Structure):
+    _fields_ = [('h_event', C.c_void_p), ('i32_ret', I32), ('u8_asyncMode', U8)]
+
+
+class ModuleInfo(C.Structure):
+    _fields_ = [('VendorID', I32), ('ProductCode', I32), ('RevisionNo', I32),
+                ('TotalAxisNum', I32), ('Axis_ID', I32 * 64), ('Axis_ID_manual', I32 * 64),
+                ('All_ModuleType', I32 * 32), ('DI_ModuleNum', I32), ('DI_ModuleType', I32 * 32),
+                ('DO_ModuleNum', I32), ('DO_ModuleType', I32 * 32),
+                ('AI_ModuleNum', I32), ('AI_ModuleType', I32 * 32),
+                ('AO_ModuleNum', I32), ('AO_ModuleType', I32 * 32), ('Name', C.c_char * 128)]
+
+
+SIGNATURES = {
+    'APS_initial': [PI32, I32], 'APS_close': [], 'APS_get_card_name': [I32, PI32],
+    'APS_get_first_axisId': [I32, PI32, PI32],
+    'APS_get_board_param': [I32, I32, PI32], 'APS_set_board_param': [I32, I32, I32],
+    'APS_get_axis_param_f': [I32, I32, PF64], 'APS_set_axis_param_f': [I32, I32, F64],
+    'APS_get_axis_param': [I32, I32, PI32], 'APS_set_axis_param': [I32, I32, I32],
+    'APS_scan_field_bus': [I32, I32], 'APS_start_field_bus': [I32, I32, I32],
+    'APS_stop_field_bus': [I32, I32], 'APS_get_field_bus_master_status': [I32, I32, PU32],
+    'APS_get_field_bus_last_scan_info': [I32, I32, PI32, I32, PI32],
+    'APS_get_field_bus_module_info': [I32, I32, I32, C.POINTER(ModuleInfo)],
+    'APS_get_field_bus_sdo': [I32, I32, I32, U16, U16, C.POINTER(U8), U32, PU32, U32, U32],
+    'APS_get_field_bus_alarm': [I32, PU32], 'APS_set_servo_on': [I32, I32],
+    'APS_motion_status': [I32], 'APS_motion_io_status': [I32],
+    'APS_get_position_f': [I32, PF64], 'APS_get_command_f': [I32, PF64],
+    'APS_get_command_velocity_f': [I32, PF64], 'APS_get_feedback_velocity_f': [I32, PF64],
+    'APS_get_stop_code': [I32, PI32], 'APS_stop_move': [I32], 'APS_emg_stop': [I32],
+    'APS_ptp_all': [I32, I32, F64, F64, F64, F64, F64, F64, F64, C.POINTER(AsyncCall)],
+}
+
+
+class APSLibrary:
+    def __init__(self, path=''):
+        if os.name != 'nt':
+            raise ControlError('APS SDK 只能在安装 ADLINK 驱动的 Windows 上运行。')
+        filename = 'APS168x64.dll' if C.sizeof(C.c_void_p) == 8 else 'APS168.dll'
+        directory = 'APS Library_x64' if C.sizeof(C.c_void_p) == 8 else 'APS Library'
+        candidates = [str(Path(path).resolve())] if path else [
+            str(Path(os.environ.get('ProgramFiles(x86)', r'C:\Program Files (x86)')) /
+                'ADLINK' / directory / filename), filename]
+        errors = []
+        for candidate in candidates:
+            try:
+                # Absolute paths and SDK search directories avoid project DLL shadowing.
+                self.dll = C.WinDLL(candidate)
+                self.path = candidate
+                break
+            except OSError as exc:
+                errors.append(str(exc))
+        else:
+            raise ControlError(f'无法加载 {filename}，请安装同位数 APS SDK/PCIe-8332 驱动。' + '; '.join(errors))
+        for name, args in SIGNATURES.items():
+            try:
+                fn = getattr(self.dll, name)
+            except AttributeError as exc:
+                raise ControlError(f'APS DLL 缺少 {name}，请核对 SDK 安装。') from exc
+            fn.argtypes, fn.restype = args, I32
+
+    def call(self, name, *args):
+        result = getattr(self.dll, name)(*args)
+        if result < 0:
+            hint = ('；EtherCAT 主站配置错误，请在 MotionCreatorPro2 核对 ESI、重新扫描生成 ENI，'
+                    '关闭 MCPro2 后重试（ESI 不是 APS 参数文件）' if result == -4012 else '')
+            raise ControlError(f'{name}{args[:2]} 返回 APS 错误 {result}{hint}')
+        return result
+
+    def value(self, name, *args, kind=F64):
+        value = kind()
+        self.call(name, *args, C.byref(value))
+        if kind is F64 and not math.isfinite(value.value):
+            raise ControlError(f'{name} 返回非有限反馈。')
+        return value.value
+
+
+@dataclass(frozen=True)
+class APSDevice(Device):
+    axis_id: int = 0
+    slave_id: int = 0
+    units_per_rev: float = 0
+
+    @property
+    def identity(self):
+        return super().identity + (self.axis_id, self.slave_id, self.units_per_rev,
+                                   self.gear_numerator, self.gear_denominator)
+
+
+def validate_options(options):
+    defaults = dict(board_id=0, bus_no=0, start_axis_id=0, dll_path='', regenerate_eni=False,
+                    axis_units_per_rev={}, poll_interval_s=.005,
+                    limit_inputs_connected=True, emg_input_connected=True)
+    if not isinstance(options, dict) or set(options) - set(defaults):
+        raise ValueError('aps 配置包含未知字段，或不是 JSON 对象。')
+    defaults.update(options)
+    for key, upper in [('board_id', 31), ('bus_no', 0), ('start_axis_id', 65535)]:
+        if type(defaults[key]) is not int or not 0 <= defaults[key] <= upper:
+            raise ValueError(f'aps.{key} 配置无效。')
+    if not isinstance(defaults['dll_path'], str) or type(defaults['regenerate_eni']) is not bool:
+        raise ValueError('aps.dll_path/regenerate_eni 配置无效。')
+    for key in ('limit_inputs_connected', 'emg_input_connected'):
+        if type(defaults[key]) is not bool:
+            raise ValueError(f'aps.{key} 必须为 true/false。')
+    interval = defaults['poll_interval_s']
+    if type(interval) not in (int, float) or not math.isfinite(interval) or not .001 <= interval <= .1:
+        raise ValueError('aps.poll_interval_s 必须为 0.001～0.1 秒。')
+    units = defaults['axis_units_per_rev']
+    if not isinstance(units, dict):
+        raise ValueError('aps.axis_units_per_rev 必须是以 APS 轴号为键的对象。')
+    for axis, value in units.items():
+        if (not isinstance(axis, str) or not axis.isdecimal() or str(int(axis)) != axis or int(axis) > 65535
+                or type(value) not in (int, float) or not math.isfinite(value) or value <= 0):
+            raise ValueError('aps.axis_units_per_rev 的轴号或每转位置单位无效。')
+    return defaults
+
+
+class PCIe8332Controller:
+    def __init__(self, adapter='PCIe-8332:0', log_dir=None, options=None, api_factory=None):
+        self.options = validate_options(options or {})
+        self.board = self.options['board_id']
+        self.adapter = adapter
+        if adapter != f'PCIe-8332:{self.board}':
+            raise ControlError(f'请选择 PCIe-8332:{self.board}；后台不再使用普通网卡。')
+        self.log_dir = Path(log_dir) if log_dir else None
+        self.api_factory = api_factory or (lambda: APSLibrary(self.options['dll_path']))
+        self.api = None
+        self.initialized = self.started = False
+        self.lock_context = None
+        self.saved_board = {}
+        self.worker_id = None
+
+    def adapters(self):
+        # Configuration labels only. Enumeration here never calls hardware from UDP thread.
+        return [(f'PCIe-8332:{self.board}', f'ADLINK PCIe-8332 · Card {self.board} · APS SDK')]
+
+    def _thread(self):
+        current = threading.get_ident()
+        if self.worker_id is None:
+            self.worker_id = current
+        elif self.worker_id != current:
+            raise ControlError('APS 硬件只能由同一工作线程访问。')
+
+    def bus_state(self):
+        return self.api.value('APS_get_field_bus_master_status', self.board, 0, kind=U32)
+
+    def _open(self):
+        self._thread()
+        if self.initialized:
+            if self.bus_state() != BUS_OP:
+                raise ControlError('PCIe-8332 总线未处于 OP；请停止并重启后台后重新扫描。')
+            return
+        lock_context = adapter_lock('APS168-library')
+        lock_context.__enter__()
+        self.lock_context = lock_context
+        try:
+            self.api = self.api_factory()
+            bits = I32()
+            # Even a failed initialization can allocate partial SDK resources.
+            self.initialized = True
+            self.api.call('APS_initial', C.byref(bits), 0)  # Preserve parameters; auto IDs; synchronous ACK.
+            if not bits.value & (1 << self.board):
+                raise ControlError(f'没有检测到 Card {self.board}；板卡位图 {bits.value & 0xffffffff:#x}。')
+            card = self.api.value('APS_get_card_name', self.board, kind=I32)
+            if card != CARD_PCIE_8332:
+                raise ControlError(f'Card {self.board} 类型为 {card}，需要 PCIe-8332 (25)。')
+            already_op = self.bus_state() == BUS_OP
+            if already_op:
+                # Card boot-time auto-connect may already be OP. Adopt it only
+                # after validating topology and verifying EVERY axis servo-off.
+                self._devices()
+                self.started = True
+            # Save before writing. Never reset alarms automatically or recover/re-enable a failed run.
+            for parameter, value in [(0x19, 0), (0x1A, 1), (0x109, 0), (0x28, 0)]:
+                self.saved_board[parameter] = self.api.value('APS_get_board_param', self.board, parameter, kind=I32)
+                self.api.call('APS_set_board_param', self.board, parameter, value)
+            if self.options['regenerate_eni']:
+                if already_op:
+                    self.api.call('APS_stop_field_bus', self.board, 0)
+                    already_op = False
+                self.api.call('APS_scan_field_bus', self.board, 0)
+            # A failed start can leave a partial bus; close must still attempt stop.
+            self.started = True
+            if not already_op:
+                self.api.call('APS_start_field_bus', self.board, 0, self.options['start_axis_id'])
+            if self.bus_state() != BUS_OP:
+                raise ControlError('APS_start_field_bus 完成后总线没有进入 OP。')
+            if not self.options['emg_input_connected']:
+                self._configure_unwired_emg()
+        except BaseException:
+            errors = self.close()
+            if errors:
+                LOG.error('APS opening cleanup failed: %s', errors)
+            raise
+
+    def _configure_unwired_emg(self):
+        # Explicit commissioning configuration only. Never auto-clear an EMG
+        # belonging to a connected emergency-stop circuit.
+        devices = self._devices()  # Verifies all servo axes off before board-wide change.
+        states = [bool(self.api.call('APS_motion_io_status', d.axis_id) & EMG) for d in devices]
+        if not any(states):
+            return
+        if not all(states):
+            raise ControlError('各轴 EMG 状态不一致；请核对板卡急停输入与驱动状态。')
+        old = self.api.value('APS_get_board_param', self.board, 0, kind=I32)
+        if old not in (0, 1):
+            raise ControlError(f'PRB_EMG_LOGIC={old} 无效，不能配置空置急停输入。')
+        self.saved_board[0] = old
+        self.api.call('APS_set_board_param', self.board, 0, old ^ 1)
+        LOG.info('Unwired EMG input: Card %s PRB_EMG_LOGIC %s -> %s', self.board, old, old ^ 1)
+        deadline = time.monotonic() + .5
+        while any(self.api.call('APS_motion_io_status', d.axis_id) & EMG for d in devices):
+            if time.monotonic() >= deadline:
+                raise ControlError('空置 EMG 输入调整极性后仍有效；请核对 PCIe-8332 急停端子，未使能。')
+            time.sleep(self.options['poll_interval_s'])
+
+    def _sdo(self, slave, index, sub=0, signed=False):
+        data, length = (U8 * 4)(), U32()
+        self.api.call('APS_get_field_bus_sdo', self.board, 0, slave, index, sub,
+                      data, 4, C.byref(length), 500, 0)
+        if length.value not in (1, 2, 4):
+            raise ControlError(f'Slave {slave} SDO {index:#x}:{sub} 长度无效：{length.value}。')
+        return int.from_bytes(bytes(data[:length.value]), 'little', signed=signed)
+
+    def _devices(self):
+        info, count = (I32 * 1)(), I32()
+        self.api.call('APS_get_field_bus_last_scan_info', self.board, 0, info, 1, C.byref(count))
+        if count.value != 1 or not 1 <= info[0] <= 128:
+            raise ControlError('APS 扫描未返回有效的从站数量。')
+        first, capacity = I32(), I32()
+        self.api.call('APS_get_first_axisId', self.board, C.byref(first), C.byref(capacity))
+        devices, axis_ids = [], set()
+        for slave in range(info[0]):
+            module = ModuleInfo()
+            self.api.call('APS_get_field_bus_module_info', self.board, 0, slave, C.byref(module))
+            if module.TotalAxisNum == 0:
+                continue  # Allow IO slaves without presenting them as motors.
+            if (module.VendorID != 0x00100000 or module.ProductCode != 0x000C010E
+                    or module.TotalAxisNum != 1):
+                raise ControlError(f'Slave {slave} 不是已核对的 SV635N 单轴设备。')
+            axis = module.Axis_ID[0]
+            if axis in axis_ids or not first.value <= axis < first.value + capacity.value:
+                raise ControlError(f'Slave {slave} 的 APS 轴映射无效：{axis}。')
+            axis_ids.add(axis)
+            io = self.api.call('APS_motion_io_status', axis)
+            if io & SVON:
+                raise ControlError(f'Axis {axis} 已使能；先在原控制程序中停止并关闭使能。')
+            if not io & ONLINE:
+                raise ControlError(f'Axis {axis} 从站不在线。')
+            motor = self._sdo(slave, 0x2000, 1)
+            direction = self._sdo(slave, 0x2002, 3)
+            numerator, denominator = self._sdo(slave, 0x6091, 1), self._sdo(slave, 0x6091, 2)
+            if motor != 14101 or direction not in (0, 1) or not numerator or not denominator:
+                raise ControlError(f'Axis {axis} 的电机型号、方向或电子齿轮参数未通过核对。')
+            units = self.options['axis_units_per_rev'].get(str(axis), (2**23) * denominator / numerator)
+            devices.append(APSDevice(order=slave + 1, alias=self._sdo(slave, 0x200E, 0x16),
+                name=f'SV635N · APS Axis {axis} / Slave {slave}', vendor=module.VendorID,
+                product=module.ProductCode, revision=module.RevisionNo, state=BUS_OP,
+                statusword=self._sdo(slave, 0x6041), error_code=self._sdo(slave, 0x603F),
+                position=self.api.value('APS_get_position_f', axis), gear_numerator=numerator,
+                gear_denominator=denominator, motor_code=motor, positive_direction=direction,
+                axis_id=axis, slave_id=slave, units_per_rev=units))
+        if not devices:
+            raise ControlError('总线上没有 SV635N 电机。')
+        return devices
+
+    def scan(self):
+        self._open()
+        return self._devices()
+
+    def close(self):
+        self._thread()
+        errors = []
+        def attempt(name, *args):
+            try:
+                self.api.call(name, *args)
+            except Exception as exc:
+                errors.append(str(exc))
+        if self.initialized:
+            if self.started:
+                attempt('APS_stop_field_bus', self.board, 0)
+            for parameter, value in self.saved_board.items():
+                attempt('APS_set_board_param', self.board, parameter, value)
+            attempt('APS_close')
+        self.initialized = self.started = False
+        self.saved_board.clear()
+        if self.lock_context is not None:
+            self.lock_context.__exit__(None, None, None)
+            self.lock_context = None
+        return errors
+
+    def run_continuous(self, devices, commands, stop, callback):
+        self._thread()
+        report = dict(error=None, stopped=False, all_disabled=False, cleanup_errors=[],
+                      backend='aps', started_commands=0, completed_commands=0)
+        owned, saved_deceleration, origins = [], {}, {}
+        saved_limit_mapping = {}
+        selected, last_targets = [], {}
+        stale_abnormal_stops = set()
+        history, trace = deque(maxlen=1000), deque(maxlen=1000)
+        active = None
+        api = self.api
+        def check_stop():
+            if stop.is_set() or commands.closed:
+                raise Stopped('连续控制已停止。')
+        def io_checked(d, enabled=False):
+            io = api.call('APS_motion_io_status', d.axis_id)
+            mask = IO_FAULTS if self.options['limit_inputs_connected'] else IO_FAULTS & ~(PEL | MEL)
+            reasons = []
+            if not io & ONLINE:
+                reasons.append('从站离线')
+            for bit, label in [(ALM, '伺服报警 ALM'), (PEL, '正限位 PEL'), (MEL, '负限位 MEL'),
+                               (EMG, '急停输入 EMG'), (1 << 10, '软件环形限位 SCL'),
+                               (1 << 11, '软件正限位 SPEL'), (1 << 12, '软件负限位 SMEL')]:
+                if io & mask & bit:
+                    reasons.append(label)
+            if reasons:
+                alarm = api.value('APS_get_field_bus_alarm', d.axis_id, kind=U32)
+                hint = (' 请核对急停接线/输入极性；确实未接急停时配置 aps.emg_input_connected=false。'
+                        if io & EMG else '')
+                raise ControlError(f'Axis {d.axis_id} {"、".join(reasons)}：IO={io:#x}, alarm={alarm:#x}。{hint}')
+            if enabled and not io & SVON:
+                raise ControlError(f'Axis {d.axis_id} 运行期间退出使能。')
+            return io
+        try:
+            check_stop()
+            current = self.scan()
+            api = self.api
+            refreshed = {d.order: d for d in current}
+            if [d.identity for d in devices] != [d.identity for d in current]:
+                raise ControlError('扫描后设备/轴映射/电子齿轮发生变化，请重新扫描。')
+            selected = [refreshed[n] for n in commands.orders]
+            for d in selected:
+                check_stop()
+                if not self.options['limit_inputs_connected']:
+                    original = api.value('APS_get_axis_param', d.axis_id, LIMIT_MAP_EN, kind=I32)
+                    saved_limit_mapping[d.axis_id] = original
+                    # Disable only PEL/MEL mapping; retain ORG and all unrelated bits.
+                    api.call('APS_set_axis_param', d.axis_id, LIMIT_MAP_EN, original & ~(PEL | MEL))
+                io_checked(d)
+                if d.error_code or d.statusword & 8:
+                    raise ControlError(f'Axis {d.axis_id} 存在驱动报警 {d.error_code:#x}。')
+                velocity = d.units_per_rev * (commands.rpm / 60)
+                acceleration = d.units_per_rev * (commands.acceleration / 60)
+                if not all(math.isfinite(v) and v > 0 for v in (velocity, acceleration)):
+                    raise ControlError('转换后的 APS 速度/加速度无法表示。')
+                saved_deceleration[d.axis_id] = api.value('APS_get_axis_param_f', d.axis_id, SD_DEC)
+                api.call('APS_set_axis_param_f', d.axis_id, SD_DEC, acceleration)
+                before_enable = api.value('APS_get_position_f', d.axis_id)
+                # Record ownership before the call: an error may occur after servo-on was applied.
+                owned.append(d)
+                api.call('APS_set_servo_on', d.axis_id, 1)
+                deadline = time.monotonic() + 2
+                while not io_checked(d) & SVON:
+                    check_stop()
+                    if time.monotonic() >= deadline:
+                        raise ControlError(f'Axis {d.axis_id} 使能确认超时。')
+                    stop.wait(self.options['poll_interval_s'])
+                origins[d.axis_id] = api.value('APS_get_position_f', d.axis_id)
+                command = api.value('APS_get_command_f', d.axis_id)
+                tolerance = max(2, d.units_per_rev * .2 / 360)
+                if abs(before_enable - origins[d.axis_id]) > tolerance:
+                    raise ControlError(f'Axis {d.axis_id} 使能期间出现意外位移。')
+                if abs(command - origins[d.axis_id]) > tolerance:
+                    raise ControlError(f'Axis {d.axis_id} 使能后指令位置与反馈不一致。')
+                status = api.call('APS_motion_status', d.axis_id)
+                if status & ASTP and status & MDN:
+                    # APS retains ASTP until the next motion command (manual p.274/1222).
+                    # Current ALM/EMG/limits remain checked; no motion is issued to clear it.
+                    stale_abnormal_stops.add(d.axis_id)
+                    LOG.info('Axis %s has historical ASTP while stopped; awaiting explicit target', d.axis_id)
+            check_stop()
+            commands.mark_ready()
+            callback(dict(kind='continuous_ready', orders=list(commands.orders)))
+            began = time.monotonic()
+            last_status = 0
+            while True:
+                check_stop()
+                if self.bus_state() != BUS_OP:
+                    raise ControlError('PCIe-8332 总线退出 OP。')
+                axes = []
+                for d in selected:
+                    io = io_checked(d, True)
+                    status = api.call('APS_motion_status', d.axis_id)
+                    if status & ASTP and (d.axis_id not in stale_abnormal_stops or
+                                          d.axis_id in last_targets or not status & MDN):
+                        code = api.value('APS_get_stop_code', d.axis_id, kind=I32)
+                        raise ControlError(f'Axis {d.axis_id} 异常停止，stop_code={code}。')
+                    position = api.value('APS_get_position_f', d.axis_id)
+                    sign = 1 if d.positive_direction else -1
+                    axes.append(dict(order=d.order, axis_id=d.axis_id, slave_id=d.slave_id,
+                        position=position, enabled=bool(io & SVON), error_code=0,
+                        travel_degrees=(position - origins[d.axis_id]) * 360 / d.units_per_rev * sign,
+                        motion_status=status, motion_io_status=io))
+                now = time.monotonic()
+                if now - last_status >= .05:
+                    callback(dict(kind='status', axes=axes))
+                    trace.append(dict(elapsed_s=now - began, axes=axes))
+                    last_status = now
+                if active and all(a['motion_status'] & MDN and
+                                  abs(a['travel_degrees'] - t) <= .2
+                                  for a, t in zip(axes, active['targets_deg'])):
+                    active['completed'] = True
+                    report['completed_commands'] += 1
+                    active = None
+                request = commands.pop()
+                if request:
+                    # Convert/validate every selected target before submitting any move.
+                    targets = [origins[d.axis_id] + value * d.units_per_rev / 360 *
+                               (1 if d.positive_direction else -1) for d, value in zip(selected, request.targets)]
+                    if not all(math.isfinite(t) and abs(t) <= 2**53 - 1 for t in targets):
+                        raise ControlError('目标超出 APS F64 可精确表示的位置范围。')
+                    for d, target in zip(selected, targets):
+                        check_stop()
+                        if last_targets.get(d.axis_id) == target:
+                            continue
+                        velocity = d.units_per_rev * (commands.rpm / 60)
+                        acceleration = d.units_per_rev * (commands.acceleration / 60)
+                        # Option 0 = absolute + aborting, no buffer, no wait-trigger.
+                        # NULL in synchronous mode acknowledges submission, never waits for arrival.
+                        api.call('APS_ptp_all', d.axis_id, 0, target, 0., velocity, 0.,
+                                 acceleration, acceleration, 0., None)
+                        last_targets[d.axis_id] = target
+                    report['started_commands'] += 1
+                    if active:
+                        active['superseded'] = True
+                    active = dict(number=request.number, targets_deg=list(request.targets),
+                                  completed=False, superseded=False)
+                    history.append(active)
+                    callback(dict(kind='command', number=request.number, stage='started', pending=commands.pending()))
+                stop.wait(self.options['poll_interval_s'])
+        except Stopped as exc:
+            report.update(stopped=True, error=str(exc))
+        except Exception as exc:
+            report['error'] = str(exc)
+            LOG.exception('APS continuous run failed')
+        finally:
+            commands.close()
+            errors = report['cleanup_errors']
+            def attempt(name, *args):
+                try:
+                    api.call(name, *args)
+                    return True
+                except Exception as exc:
+                    errors.append(str(exc))
+                    return False
+            # Submit stop to ALL owned axes even if one fails. Never touch unselected axes.
+            for d in owned:
+                if not attempt('APS_stop_move', d.axis_id):
+                    attempt('APS_emg_stop', d.axis_id)
+            deadline = time.monotonic() + max(1., commands.rpm / commands.acceleration + .5)
+            deadline = min(deadline, time.monotonic() + 5)
+            pending = list(owned)
+            while pending and time.monotonic() < deadline:
+                for d in pending[:]:
+                    try:
+                        done = api.call('APS_motion_status', d.axis_id) & MDN
+                        speed = api.value('APS_get_feedback_velocity_f', d.axis_id)
+                        if done and abs(speed) <= max(1., d.units_per_rev * .01 / 60):
+                            pending.remove(d)
+                    except Exception as exc:
+                        errors.append(str(exc))
+                        attempt('APS_emg_stop', d.axis_id)
+                        pending.remove(d)
+                if pending:
+                    time.sleep(self.options['poll_interval_s'])
+            for d in pending:
+                errors.append(f'Axis {d.axis_id} 减速停止确认超时，执行急停并关闭使能。')
+                attempt('APS_emg_stop', d.axis_id)
+            for d in owned:
+                attempt('APS_set_servo_on', d.axis_id, 0)
+            pending_disable = list(owned)
+            deadline = time.monotonic() + 2
+            while pending_disable and time.monotonic() < deadline:
+                for d in pending_disable[:]:
+                    try:
+                        io = api.call('APS_motion_io_status', d.axis_id)
+                        if io & ONLINE and not io & SVON and self.bus_state() == BUS_OP:
+                            pending_disable.remove(d)
+                    except Exception as exc:
+                        errors.append(str(exc))
+                        # Failed read cannot establish disable; retain it for the final report.
+                        deadline = time.monotonic()
+                        break
+                if pending_disable:
+                    time.sleep(self.options['poll_interval_s'])
+            report['all_disabled'] = not pending_disable
+            if pending_disable:
+                errors.append('未能核对所有选中轴关闭使能。')
+            for axis, value in saved_deceleration.items():
+                attempt('APS_set_axis_param_f', axis, SD_DEC, value)
+            for axis, value in saved_limit_mapping.items():
+                attempt('APS_set_axis_param', axis, LIMIT_MAP_EN, value)
+            # A fault requires a fresh APS lifecycle on the next explicit scan.
+            if not report['stopped'] or errors:
+                errors.extend(self.close())
+            report.update(commands=list(history), trace=list(trace), trace_tail_only=True,
+                          command_history_tail_only=True,
+                          selected_axes=[dict(order=d.order, axis_id=d.axis_id, slave_id=d.slave_id,
+                              units_per_rev=d.units_per_rev) for d in selected])
+            if self.log_dir:
+                try:
+                    self.log_dir.mkdir(parents=True, exist_ok=True)
+                    path = self.log_dir / (datetime.now().strftime('aps_%Y%m%d_%H%M%S_%f') + '.json')
+                    report['log_path'] = str(path)
+                    path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
+                except Exception as exc:
+                    LOG.exception('Unable to save APS report: %s', exc)
+        return report

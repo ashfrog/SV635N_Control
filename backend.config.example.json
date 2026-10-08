@@ -1,7 +1,18 @@
 {
   "host": "127.0.0.1",
   "port": 5005,
-  "adapter": "\\Device\\NPF_{89B39964-A086-4A5D-BC55-D5804AE703C6}",
+  "adapter": "PCIe-8332:0",
   "heartbeat_timeout_s": 0.5,
-  "auth_key": ""
+  "auth_key": "",
+  "aps": {
+    "board_id": 0,
+    "bus_no": 0,
+    "start_axis_id": 0,
+    "dll_path": "",
+    "regenerate_eni": false,
+    "axis_units_per_rev": {},
+    "poll_interval_s": 0.005,
+    "limit_inputs_connected": false,
+    "emg_input_connected": false
+  }
 }

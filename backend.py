@@ -9,7 +9,7 @@ import subprocess
 import sys
 import threading
 
-from core import DEFAULT_ADAPTER
+from aps_backend import validate_options
 from udp_server import UDPServer
 from motor_service import MotorService
 
@@ -17,7 +17,7 @@ BASE=Path(__file__).resolve().parent
 
 
 def load_config(path):
-    config=dict(host='127.0.0.1',port=5005,adapter=DEFAULT_ADAPTER,heartbeat_timeout_s=.5,auth_key='')
+    config=dict(host='127.0.0.1',port=5005,adapter=None,heartbeat_timeout_s=.5,auth_key='',aps={})
     if path.exists():
         supplied=json.loads(path.read_text(encoding='utf-8-sig'))
         if not isinstance(supplied,dict) or set(supplied)-set(config):
@@ -25,7 +25,13 @@ def load_config(path):
         config.update(supplied)
     if not isinstance(config['host'],str) or type(config['port']) is not int or not 1<=config['port']<=65535:
         raise ValueError('host/port 配置无效。')
-    if not isinstance(config['adapter'],str) or not config['adapter'] or not isinstance(config['auth_key'],str):
+    config['aps'] = validate_options(config['aps'])
+    configured_adapter = f"PCIe-8332:{config['aps']['board_id']}"
+    if config['adapter'] is None:
+        config['adapter'] = configured_adapter
+    if config['adapter'] != configured_adapter:
+        raise ValueError('adapter 请改为 ' + configured_adapter + '；PCIe-8332 后台不使用 NPF 网卡。')
+    if not isinstance(config['auth_key'],str):
         raise ValueError('adapter/auth_key 配置无效。')
     return config
 
@@ -87,7 +93,7 @@ def main():
     signal.signal(signal.SIGTERM,lambda *_:quit_event.set())
     try:
         config=load_config(args.config)
-        service=MotorService(config['adapter'],log_dir,config['heartbeat_timeout_s'])
+        service=MotorService(config['adapter'],log_dir,config['heartbeat_timeout_s'],aps_options=config['aps'])
         server=UDPServer(service,config['host'],config['port'],config['auth_key']).start()
         if args.headless:
             print(f"SV635N UDP 后台已启动：{config['host']}:{server.port}，电机未使能。",flush=True)

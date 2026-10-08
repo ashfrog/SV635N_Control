@@ -36,6 +36,7 @@ import sys
 import backend, motor_service, udp_server
 assert not any(name=='UdpControl' or name.startswith('UdpControl.') for name in sys.modules)
 assert 'tkinter' not in sys.modules
+assert 'pysoem' not in sys.modules
 print('independent backend imports OK')
 '''
         result = subprocess.run([sys.executable,'-c',script],cwd=Path(__file__).resolve().parent,

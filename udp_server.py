@@ -8,7 +8,7 @@ import socket
 import threading
 import time
 
-from core import ControlError
+from control_common import ControlError
 
 PROTOCOL_VERSION = 1
 MAX_PACKET = 8192

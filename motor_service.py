@@ -1,4 +1,4 @@
-"""Hardware ownership and lifecycle; socket/UI threads never access EtherCAT."""
+"""Hardware ownership and lifecycle; socket/UI threads never access APS hardware."""
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 import logging
@@ -7,21 +7,23 @@ import threading
 import time
 import uuid
 
-from core import ControlError, EtherCATController
-from continuous_control import MotionQueue, run_continuous
+from control_common import ControlError, MotionQueue
+from aps_backend import PCIe8332Controller
 
 LOG = logging.getLogger(__name__)
 BUSY = ('scanning', 'enabling', 'enabled', 'stopping')
 
 
 class MotorService:
-    def __init__(self, adapter, log_dir=None, heartbeat_timeout=.5, controller_factory=None):
+    def __init__(self, adapter='PCIe-8332:0', log_dir=None, heartbeat_timeout=.5, controller_factory=None,
+                 aps_options=None):
         if type(heartbeat_timeout) not in (float, int) or not math.isfinite(heartbeat_timeout) or not .1 <= heartbeat_timeout <= 5:
             raise ValueError('heartbeat_timeout 必须为 0.1～5 秒。')
         self.adapter, self.log_dir, self.timeout = adapter, log_dir, heartbeat_timeout
-        self.controller_factory = controller_factory or EtherCATController
+        self.controller_factory = controller_factory
+        self.hardware = None if controller_factory else PCIe8332Controller(adapter, log_dir, aps_options)
         self.lock = threading.RLock()
-        self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='Motor-EtherCAT')
+        self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='Motor-Hardware')
         self.devices = []
         self.commands = None
         self.stop_event = threading.Event()
@@ -35,17 +37,22 @@ class MotorService:
         self.monitor.start()
 
     def _controller(self):
-        return self.controller_factory(self.adapter, self.log_dir)
+        return self.hardware or self.controller_factory(self.adapter, self.log_dir)
 
     def snapshot(self):
         with self.lock:
             feedback = {a['order']: a for a in self.axes}
             return deepcopy(dict(phase=self.phase, message=self.message, adapter=self.adapter,
+                hardware_backend='aps' if self.hardware else 'injected',
+                input_configuration=({key: self.hardware.options[key] for key in
+                    ('limit_inputs_connected', 'emg_input_connected')} if self.hardware else {}),
                 run_id=self.run_id, seq=self.sequence, heartbeat_timeout_s=self.timeout,
                 orders=self.orders, targets_deg=list(self.commands.planned) if self.commands else [],
                 devices=[dict(order=d.order, id=d.alias, name=d.name, motor_code=d.motor_code,
                               positive_direction=d.positive_direction, error_code=d.error_code,
-                              position=d.position) for d in self.devices], axes=self.axes,
+                              position=d.position, **({k: getattr(d, k) for k in
+                                  ('axis_id', 'slave_id', 'units_per_rev')} if hasattr(d, 'axis_id') else {}))
+                         for d in self.devices], axes=self.axes,
                 enabled=bool(self.orders and all(n in feedback and feedback[n]['enabled'] for n in self.orders)),
                 result=self.result, stop_reason=self.stop_reason))
 
@@ -54,7 +61,12 @@ class MotorService:
             return self.phase in BUSY
 
     def adapters(self):
-        return [dict(name=name, description=description) for name, description in EtherCATController.adapters()]
+        if self.hardware:
+            adapters = self.hardware.adapters()
+        else:
+            from core import EtherCATController
+            adapters = EtherCATController.adapters()
+        return [dict(name=name, description=description) for name, description in adapters]
 
     def scan(self, adapter=None):
         with self.lock:
@@ -62,7 +74,9 @@ class MotorService:
                 raise ControlError('后台忙碌，请先停止本次运行。')
             if adapter is not None:
                 if not isinstance(adapter, str) or not adapter or len(adapter) > 512:
-                    raise ControlError('网卡名称无效。')
+                    raise ControlError('控制卡名称无效。')
+                if self.hardware and adapter != self.hardware.adapter:
+                    raise ControlError('控制卡与后台 aps.board_id 配置不一致。')
                 self.adapter = adapter
             self.phase, self.message = 'scanning', '正在扫描电机，不使能'
             self.devices, self.axes, self.orders, self.result = [], [], [], None
@@ -76,6 +90,10 @@ class MotorService:
                 self.phase, self.message = 'idle', f'扫描到 {len(devices)} 台电机'
             LOG.info('Scan completed: %s devices', len(devices))
         except Exception as exc:
+            if self.hardware:
+                errors = self.hardware.close()
+                if errors:
+                    LOG.error('Scan cleanup errors: %s', errors)
             with self.lock:
                 self.phase, self.message = 'fault', str(exc)
             LOG.exception('Scan failed')
@@ -118,7 +136,13 @@ class MotorService:
 
     def _run(self, commands, stop, devices):
         try:
-            report = run_continuous(self._controller(), devices, commands, stop, self._event)
+            controller = self._controller()
+            if hasattr(controller, 'run_continuous'):
+                report = controller.run_continuous(devices, commands, stop, self._event)
+            else:
+                # Legacy direct-NIC controllers remain usable in standalone tools/tests.
+                from continuous_control import run_continuous
+                report = run_continuous(controller, devices, commands, stop, self._event)
         except Exception as exc:
             LOG.exception('Motor worker failed')
             report = dict(error=str(exc), all_disabled=False)
@@ -188,6 +212,12 @@ class MotorService:
         self.shutdown.set()
         self.stop('后台退出')
         self.monitor.join(timeout=1)
+        if self.hardware:
+            def close_hardware():
+                errors = self.hardware.close()
+                if errors:
+                    LOG.error('APS shutdown errors: %s', errors)
+            self.executor.submit(close_hardware)
         # Keep the process alive until the hardware worker has attempted stop,
         # verified disable and restored parameters. Never abandon this worker.
         self.executor.shutdown(wait=True)

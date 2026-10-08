@@ -24,13 +24,13 @@ state 的 phase 是 `idle / scanning / enabling / enabled / stopping / fault`。
 {"v":1,"id":"a1","type":"adapters","session":"...","control_seq":0}
 ```
 
-返回 `adapters:[{"name":"\\Device\\NPF_{...}","description":"..."}]`。
+返回 `adapters:[{"name":"PCIe-8332:0","description":"..."}]`。
 
 ```json
-{"v":1,"id":"s1","type":"scan","session":"...","control_seq":1,"adapter":"\\Device\\NPF_{...}"}
+{"v":1,"id":"s1","type":"scan","session":"...","control_seq":1,"adapter":"PCIe-8332:0"}
 ```
 
-adapter 可省略，使用后台当前配置。扫描为异步请求；轮询 status 或接收推送，等 phase=idle 后读取 state.devices。链路位置 order（1 起始）作为控制编号，ID 0 也不等于链路位置 0。
+adapter 可省略，使用后台当前控制卡配置；PCIe 后台仅接受匹配 aps.board_id 的卡标签。扫描为异步请求；轮询 status 或接收推送，等 phase=idle 后读取 state.devices。链路位置 order（1 起始）作为控制编号，ID 0 也不等于链路位置 0。
 
 ```json
 {"v":1,"id":"e1","type":"enable","session":"...","control_seq":2,"orders":[1,2,3],"rpm":80,"acceleration_rpm_s":120}
@@ -76,6 +76,6 @@ disable 不要求 seq，匹配当前 run_id 就优先请求停止。ack 仅表�
 {"v":1,"id":"q1","type":"status"}
 ```
 
-完整 state 还包括 adapter、message、heartbeat_timeout_s、orders、targets_deg、seq、devices、axes、result、stop_reason。axes 项含 order、position（原始计数）、enabled、error_code、travel_degrees（累计偏移）。result 含 stopped、error、all_disabled、cleanup_errors、log_path、stop_reason 和 PDO 恢复统计。feedback 中 seq 是所接收的最大序号，**不表示到位**。具体轴位置以 axes 为准。
+完整 state 还包括 adapter、message、heartbeat_timeout_s、orders、targets_deg、seq、devices、axes、result、stop_reason。PCIe 后台 state.hardware_backend 为 aps，input_configuration 包含 limit_inputs_connected / emg_input_connected（布尔值），devices 新增 axis_id、slave_id、units_per_rev，axes 项含 order、axis_id、slave_id、position（APS 原始位置单位）、enabled、error_code、travel_degrees（累计偏移）。result 含 stopped、error、all_disabled、cleanup_errors、log_path、stop_reason；旧网卡后端另有 PDO 恢复统计（APS 后台不使用它）。feedback 中 seq 是所接收的最大序号，**不表示到位**。具体轴位置以 axes 为准。
 
 不确定 enable 是否执行时先查 state.run_id 和 phase；若尚在准备，保持当前 run 心跳或明确停止。不要用不同 id 重发 enable。停止失败或反馈失联时不能仅凭 ack 宣称电机已关闭。

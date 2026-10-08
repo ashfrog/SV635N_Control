@@ -6,11 +6,9 @@ The threading.Event stop token may be set from any thread; callbacks must not bl
 """
 from __future__ import annotations
 
-from contextlib import contextmanager
 import ctypes
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from datetime import datetime
-import hashlib
 import json
 import math
 from pathlib import Path
@@ -19,96 +17,16 @@ import threading
 import time
 from typing import Callable
 import pysoem
+from control_common import (ControlError, Stopped, Device, Move, adapter_lock,
+                            DEFAULT_CONTINUOUS_RPM, DEFAULT_CONTINUOUS_ACCELERATION_RPM_S,
+                            MAX_MOVE_DEGREES, MAX_MOVE_SECONDS)
 
 DEFAULT_ADAPTER = r'\Device\NPF_{89B39964-A086-4A5D-BC55-D5804AE703C6}'
 RX_MAP = [0x60400010, 0x607A0020, 0x60B80010, 0x60FE0120]
 TX_MAP = [0x603F0010, 0x60410010, 0x60640020, 0x60770010,
           0x60F40020, 0x60B90010, 0x60BA0020, 0x60BC0020, 0x60FD0020]
-LOCAL_LOCK = threading.Lock()
-DEFAULT_CONTINUOUS_RPM = 60
-DEFAULT_CONTINUOUS_ACCELERATION_RPM_S = 120
-MAX_MOVE_DEGREES = 3600
-MAX_MOVE_SECONDS = 120
 PDO_MAX_FAILED_EXCHANGES = 5
 PDO_RECOVERY_SECONDS = .010
-
-
-class ControlError(RuntimeError):
-    pass
-
-
-class Stopped(ControlError):
-    pass
-
-
-@dataclass(frozen=True)
-class Device:
-    order: int
-    alias: int
-    name: str
-    vendor: int
-    product: int
-    revision: int
-    state: int
-    statusword: int
-    error_code: int
-    position: int
-    gear_numerator: int
-    gear_denominator: int
-    motor_code: int = 14101
-    positive_direction: int = 1  # H02.02: 0=CCW, 1=CW, viewed from shaft
-
-    @property
-    def identity(self):
-        return (self.order, self.alias, self.vendor, self.product, self.revision,
-                self.motor_code, self.positive_direction)
-
-
-@dataclass(frozen=True)
-class Move:
-    """order is physical chain position (1-based); alias 0 is NOT an array index."""
-    order: int
-    degrees: float = 30.0  # shaft view: positive=CW, negative=CCW
-    rpm: float = 5.0
-    encoder_bits: int = 23  # user must match the motor nameplate: A3=23, A6=26
-    acceleration_rpm_s: float = 10.0  # symmetric acceleration/deceleration
-
-    @property
-    def estimated_seconds(self):
-        """Rest-to-rest PP duration, including triangular short-distance profiles."""
-        distance = abs(self.degrees) / 6
-        triangular_peak = math.sqrt(distance) * math.sqrt(self.acceleration_rpm_s)
-        if self.rpm >= triangular_peak:
-            return 2 * math.sqrt(distance) / math.sqrt(self.acceleration_rpm_s)
-        return distance / self.rpm + self.rpm / self.acceleration_rpm_s
-
-    @property
-    def peak_rpm(self):
-        return min(self.rpm, math.sqrt(abs(self.degrees) / 6) * math.sqrt(self.acceleration_rpm_s))
-
-    def validate(self):
-        self.validate_profile()
-        if not math.isfinite(self.degrees) or not .1 <= abs(self.degrees) <= MAX_MOVE_DEGREES:
-            raise ControlError('角度范围：0.1～3600°，正负表示方向。')
-        if self.estimated_seconds > MAX_MOVE_SECONDS:
-            raise ControlError('单次预计运动超过 120 秒，请减少角度或提高速度。')
-
-    def validate_profile(self):
-        """Speed and acceleration have no software range beyond positive finite values."""
-        if isinstance(self.order, bool) or not isinstance(self.order, int) or self.order < 1:
-            raise ControlError('电机位置编号无效，请重新扫描。')
-        for value, label, unit in ((self.rpm, '速度', 'rpm'),
-                                   (self.acceleration_rpm_s, '加减速度', 'rpm/s')):
-            try:
-                valid = type(value) in (int, float) and math.isfinite(value) and value > 0
-            except OverflowError:
-                valid = False
-            if not valid:
-                raise ControlError(f'{label}必须为大于 0 的有限数值（{unit}）。')
-        if self.encoder_bits != 23:
-            raise ControlError('当前版本只接受已核对的 A3 / 23位电机，其他编码器须另行核对。')
-
-
 def read(slave, index, sub=0, signed=False):
     for attempt in range(3):
         try:
@@ -136,37 +54,6 @@ def displacement(actual, origin):
     return (actual - origin + 2**31) % 2**32 - 2**31
 
 
-@contextmanager
-def adapter_lock(adapter):
-    """Exclude simultaneous sessions in this program, including other EXE instances."""
-    if not LOCAL_LOCK.acquire(False):
-        raise ControlError('正在扫描或运行，请等待或按停止。')
-    kernel = None
-    handle = None
-    try:
-        import os
-        if os.name == 'nt':
-            from ctypes import wintypes
-            kernel = ctypes.WinDLL('kernel32', use_last_error=True)
-            kernel.CreateMutexW.argtypes = (ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR)
-            kernel.CreateMutexW.restype = wintypes.HANDLE
-            kernel.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
-            kernel.ReleaseMutex.argtypes = (wintypes.HANDLE,)
-            kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
-            name = 'Local\\SV635N_' + hashlib.sha256(adapter.encode()).hexdigest()[:24]
-            handle = kernel.CreateMutexW(None, False, name)
-            if not handle:
-                raise ControlError('无法创建网卡访问锁。')
-            if kernel.WaitForSingleObject(handle, 0) not in (0, 0x80):
-                kernel.CloseHandle(handle)
-                handle = None
-                raise ControlError('另一个本程序窗口正在使用此网卡。')
-        yield
-    finally:
-        if handle:
-            kernel.ReleaseMutex(handle)
-            kernel.CloseHandle(handle)
-        LOCAL_LOCK.release()
 
 
 class EtherCATController:

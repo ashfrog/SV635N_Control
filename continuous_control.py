@@ -4,84 +4,11 @@ Only the worker touches EtherCAT. The GUI publishes immutable targets.
 No network transport or heartbeat is needed for an idle manual session.
 """
 from collections import deque
-from dataclasses import dataclass
-import math
+from control_common import MotionCommand, MotionQueue
 import threading
 import time
 
-from core import (DEFAULT_CONTINUOUS_ACCELERATION_RPM_S, DEFAULT_CONTINUOUS_RPM, MAX_MOVE_SECONDS,
-                  ControlError, Move, Stopped, _Session, adapter_lock, displacement)
-
-
-@dataclass(frozen=True)
-class MotionCommand:
-    number: int
-    targets: tuple[float, ...]
-    estimated_seconds: float
-
-
-class MotionQueue:
-    def __init__(self, orders, rpm=DEFAULT_CONTINUOUS_RPM, acceleration=DEFAULT_CONTINUOUS_ACCELERATION_RPM_S):
-        self.orders = tuple(orders)
-        if (not self.orders or len(set(self.orders)) != len(self.orders)
-                or self.orders != tuple(sorted(self.orders))):
-            raise ControlError('请选择不同的电机，按链路位置升序排列。')
-        for order in self.orders:
-            Move(order, .1, rpm, acceleration_rpm_s=acceleration).validate_profile()
-        self.rpm, self.acceleration = rpm, acceleration
-        self.lock = threading.Lock()
-        self.commands = deque()
-        self.planned = (0.0,) * len(self.orders)
-        self.number = 0
-        self.ready = self.closed = False
-
-    def mark_ready(self):
-        with self.lock:
-            if self.closed:
-                raise Stopped('连续控制已关闭。')
-            self.ready = True
-
-    def close(self):
-        with self.lock:
-            self.ready = False
-            self.closed = True
-            self.commands.clear()
-
-    def submit(self, values, relative=False):
-        values = tuple(values)
-        try:
-            valid = len(values) == len(self.orders) and all(
-                type(x) in (int, float) and math.isfinite(x) for x in values)
-        except OverflowError:
-            valid = False
-        if not valid:
-            raise ControlError('请输入每个选中轴的有限角度数值。')
-        with self.lock:
-            if not self.ready or self.closed:
-                raise ControlError('尚未完成使能，或正在关闭使能。')
-            targets = tuple(old + change for old, change in zip(self.planned, values)) if relative else values
-            if any(not math.isfinite(x) for x in targets):
-                raise ControlError('累计目标数值无法表示，未更新目标。')
-            duration = max(Move(n, target - old, self.rpm,
-                                acceleration_rpm_s=self.acceleration).estimated_seconds
-                           for n, target, old in zip(self.orders, targets, self.planned))
-            if duration > MAX_MOVE_SECONDS:
-                raise ControlError('本条指令预计运动超过 120 秒，请减少位移。')
-            self.number += 1
-            command = MotionCommand(self.number, targets, duration)
-            self.commands.clear()  # New targets replace pending frames; relative intent still accumulates.
-            self.commands.append(command)
-            self.planned = targets
-            return command
-
-    def pop(self):
-        with self.lock:
-            return self.commands.popleft() if self.commands else None
-
-    def pending(self):
-        with self.lock:
-            return len(self.commands)
-
+from core import (ControlError, Move, Stopped, _Session, adapter_lock, displacement)
 
 class _ManualSession(_Session):
     def __init__(self, controller, devices, commands, stop, callback):

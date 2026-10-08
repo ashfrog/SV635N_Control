@@ -2,7 +2,7 @@
 setlocal
 cd /d "%~dp0"
 if not exist ".venv\Scripts\pythonw.exe" goto missing_env
-".venv\Scripts\python.exe" -B -c "import pysoem, pystray, PIL, backend" >nul 2>&1
+".venv\Scripts\python.exe" -B -c "import pystray, PIL, backend" >nul 2>&1
 if errorlevel 1 goto missing_dependencies
 start "" ".venv\Scripts\pythonw.exe" -B "backend.py"
 exit /b 0
@@ -14,7 +14,7 @@ echo   .venv\Scripts\python.exe -m pip install -r requirements.txt
 goto failed
 
 :missing_dependencies
-echo Python dependencies could not be loaded. Check Npcap and run:
+echo Python dependencies could not be loaded. Run:
 echo   .venv\Scripts\python.exe -m pip install -r requirements.txt
 
 :failed
