@@ -25,6 +25,10 @@ RX_MAP = [0x60400010, 0x607A0020, 0x60B80010, 0x60FE0120]
 TX_MAP = [0x603F0010, 0x60410010, 0x60640020, 0x60770010,
           0x60F40020, 0x60B90010, 0x60BA0020, 0x60BC0020, 0x60FD0020]
 LOCAL_LOCK = threading.Lock()
+MAX_RPM = 60
+MAX_ACCELERATION_RPM_S = 120
+MAX_MOVE_DEGREES = 3600
+MAX_MOVE_SECONDS = 120
 
 
 class ControlError(RuntimeError):
@@ -84,15 +88,15 @@ class Move:
     def validate(self):
         if isinstance(self.order, bool) or not isinstance(self.order, int) or self.order < 1:
             raise ControlError('电机位置编号无效，请重新扫描。')
-        if not math.isfinite(self.degrees) or not .1 <= abs(self.degrees) <= 3600:
+        if not math.isfinite(self.degrees) or not .1 <= abs(self.degrees) <= MAX_MOVE_DEGREES:
             raise ControlError('角度范围：0.1～3600°，正负表示方向。')
-        if not math.isfinite(self.rpm) or not .1 <= self.rpm <= 60:
+        if not math.isfinite(self.rpm) or not .1 <= self.rpm <= MAX_RPM:
             raise ControlError('本调试工具速度范围：0.1～60 rpm。')
-        if not math.isfinite(self.acceleration_rpm_s) or not 1 <= self.acceleration_rpm_s <= 120:
+        if not math.isfinite(self.acceleration_rpm_s) or not 1 <= self.acceleration_rpm_s <= MAX_ACCELERATION_RPM_S:
             raise ControlError('本调试工具加减速度范围：1～120 rpm/s。')
         if self.encoder_bits != 23:
             raise ControlError('当前版本只接受已核对的 A3 / 23位电机，其他编码器须另行核对。')
-        if self.estimated_seconds > 120:
+        if self.estimated_seconds > MAX_MOVE_SECONDS:
             raise ControlError('单次预计运动超过 120 秒，请减少角度或提高速度。')
 
 
@@ -397,6 +401,18 @@ class _Session:
             raise ControlError('准备期间检测到意外使能。')
         self.report['op_verified'] = True
 
+    def update_feedback(self, a):
+        """Hook for sessions that track encoder rollover across many moves."""
+
+    def travel_degrees(self, a):
+        return displacement(a['last'][2], a['origin']) * 360 / a['counts'] * a['direction_factor']
+
+    def check_travel(self, a):
+        travel = displacement(a['last'][2], a['origin'])
+        bound = abs(a['delta']) + max(a['tolerance'] * 5, round(a['counts'] * 5 / 360))
+        if abs(travel) > bound:
+            raise ControlError(f"ID {a['device'].alias} 超出位移边界。")
+
     def tick(self, checked=True, cancellable=True):
         if cancellable:
             self.check_stop()  # checked immediately BEFORE staging enable/setpoint
@@ -414,6 +430,7 @@ class _Session:
         row = [t, wkc, late]
         for a in self.axes:
             a['last'] = struct.unpack_from('<HHi', a['slave'].input)
+            self.update_feedback(a)
             row.extend([a['cw'], a['target'], *a['last']])
         self.trace.append(row)
         self.last_wkc = wkc
@@ -430,10 +447,7 @@ class _Session:
                 if not a['request'] and sw & 4:
                     raise ControlError(f'{label} 未选中却处于使能状态。')
                 if self.armed and a['request']:
-                    travel = displacement(actual, a['origin'])
-                    bound = abs(a['delta']) + max(a['tolerance'] * 5, round(a['counts'] * 5 / 360))
-                    if abs(travel) > bound:
-                        raise ControlError(f'{label} 超出位移边界。')
+                    self.check_travel(a)
             if self.op_required and t - self.last_state >= .05:
                 self.master.read_state()
                 self.last_state = t
@@ -444,7 +458,7 @@ class _Session:
             self.emit('status', wkc=wkc, expected_wkc=self.expected,
                       axes=[{'order': a['device'].order, 'position': a['last'][2],
                              'enabled': bool(a['last'][1] & 4), 'error_code': a['last'][0],
-                             'travel_degrees': displacement(a['last'][2], a['origin']) * 360 / a['counts'] * a['direction_factor']
+                             'travel_degrees': self.travel_degrees(a)
                              if 'origin' in a else None} for a in self.axes])
         self.deadline += 1_000_000
         remaining = self.deadline - time.perf_counter_ns()

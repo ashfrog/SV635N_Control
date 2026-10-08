@@ -10,7 +10,7 @@ import threading
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from core import DEFAULT_ADAPTER, EtherCATController, Move
+from core import DEFAULT_ADAPTER, MAX_ACCELERATION_RPM_S, MAX_RPM, EtherCATController, Move
 from continuous_control import MotionQueue, run_continuous
 
 
@@ -51,15 +51,14 @@ class App(tk.Tk):
         self.adapter_names = []
         self.adapter_var = tk.StringVar()
         self.angle = tk.StringVar(value='30')
-        self.rpm = tk.StringVar(value='5')
-        self.acceleration = tk.StringVar(value='10')
+        self.rpm = tk.StringVar(value=str(MAX_RPM))
+        self.acceleration = tk.StringVar(value=str(MAX_ACCELERATION_RPM_S))
         self.direction = tk.StringVar(value='forward')
         self.encoder = tk.StringVar(value='A3 · 23位（逐轴核对）')
         self.ready = tk.BooleanVar(value=False)
         self.continuous_enabled = tk.BooleanVar(value=False)
         self.continuous_active = self.continuous_ready = False
         self.motion_queue = None
-        self.continuous_limit = tk.StringVar(value='360')
         self.queue_text = tk.StringVar(value='连续使能未开启')
         self.target_values = {}
         self.target_editor = None
@@ -166,15 +165,12 @@ class App(tk.Tk):
         self.continuous_switch = ttk.Checkbutton(continuous, text='连续使能（空闲保持使能）',
                                                 variable=self.continuous_enabled, command=self.toggle_continuous)
         self.continuous_switch.grid(row=0, column=0, sticky='w', padx=(0, 12))
-        ttk.Label(continuous, text='累计限位 ±°', style='Card.TLabel').grid(row=0, column=1, padx=6)
-        self.limit_entry = ttk.Entry(continuous, textvariable=self.continuous_limit, width=8)
-        self.limit_entry.grid(row=0, column=2)
         self.target_button = ttk.Button(continuous, text='发送各轴目标', command=self.send_targets)
-        self.target_button.grid(row=0, column=3, padx=10)
+        self.target_button.grid(row=0, column=1, padx=10)
         self.origin_button = ttk.Button(continuous, text='回到使能起点', command=lambda: self.send_targets(origin=True))
-        self.origin_button.grid(row=0, column=4)
+        self.origin_button.grid(row=0, column=2)
         ttk.Label(continuous, text='双击列表“目标偏移”填写各轴角度；连续使能后可追加相对指令。'
-                  '指令按顺序执行，目标以本次使能起点为零。',
+                  '新指令立即更新运动目标，目标以本次使能起点为零。',
                   style='Card.TLabel', wraplength=960).grid(row=1, column=0, columnspan=5, sticky='w', pady=(8, 0))
         ttk.Label(continuous, textvariable=self.queue_text, style='Card.TLabel').grid(
             row=2, column=0, columnspan=5, sticky='w', pady=(4, 0))
@@ -200,9 +196,12 @@ class App(tk.Tk):
                 raise ValueError('角度请输入正数。')
             move = Move(1, angle, rpm, acceleration_rpm_s=float(self.acceleration.get()))
             move.validate()
-            ending = '连续模式：加入队列，完成后保持使能。' if self.continuous_active else '单次模式：完成后关闭使能。'
-            self.summary.set(f'选中电机均{sign} {angle:g}°，预计运动 {move.estimated_seconds:.2f} 秒，'
-                             f'峰值约 {move.peak_rpm:.1f} rpm；{ending}')
+            if self.continuous_active:
+                self.summary.set(f'每次追加使选中轴目标{sign} {angle:g}°；最高 {rpm:g} rpm，'
+                                 f'加减速 {move.acceleration_rpm_s:g} rpm/s；运动中更新目标，不等待到位。')
+            else:
+                self.summary.set(f'选中电机均{sign} {angle:g}°，预计运动 {move.estimated_seconds:.2f} 秒，'
+                                 f'峰值约 {move.peak_rpm:.1f} rpm；单次模式：完成后关闭使能。')
         except (ValueError, RuntimeError):
             self.summary.set('请输入范围内的角度、最高速度和加减速度。')
 
@@ -224,7 +223,6 @@ class App(tk.Tk):
             (self.continuous_active and self.motion_queue and not self.motion_queue.closed
              and not self.stop_token.is_set()) or
             (not self.busy and available and self.ready.get()) else 'disabled')
-        self.limit_entry.configure(state='disabled' if self.busy else 'normal')
         for button in (self.target_button, self.origin_button):
             button.configure(state='normal' if self.continuous_ready else 'disabled')
 
@@ -373,10 +371,9 @@ class App(tk.Tk):
         try:
             if not self.ready.get() or not self.selected:
                 raise ValueError('请确认运行条件并选中电机。')
-            limit = float(self.continuous_limit.get())
             rpm, acceleration = float(self.rpm.get()), float(self.acceleration.get())
             orders = sorted(self.selected)
-            commands = MotionQueue(orders, limit, rpm, acceleration)
+            commands = MotionQueue(orders, rpm=rpm, acceleration=acceleration)
             controller = EtherCATController(self.adapter(), self.base / 'logs')
         except Exception as exc:
             self.continuous_enabled.set(False)
@@ -391,7 +388,7 @@ class App(tk.Tk):
             self.set_target(order, '0')
         self.queue_text.set('正在开启连续使能；不会自动运动')
         self.update_summary()
-        self.append(f'开启连续使能：链路位置 {orders}；累计限位 ±{limit:g}°；'
+        self.append(f'开启连续使能：链路位置 {orders}；'
                     f'{rpm:g} rpm / {acceleration:g} rpm/s。')
         self.submit('continuous', lambda: run_continuous(
             controller, snapshot, commands, self.stop_token, self.events.put))
@@ -434,8 +431,8 @@ class App(tk.Tk):
     def show_queued(self, command):
         for order, target in zip(self.motion_queue.orders, command.targets):
             self.set_target(order, f'{target:g}')
-        self.queue_text.set(f'已加入指令 #{command.number}；待执行 {self.motion_queue.pending()} 条')
-        self.append(f'指令 #{command.number} 已加入队列，目标偏移：{list(command.targets)}°。')
+        self.queue_text.set(f'最新指令 #{command.number}；目标已更新')
+        self.append(f'指令 #{command.number} 已更新，目标偏移：{list(command.targets)}°。')
 
     def queue_relative(self):
         try:
@@ -470,7 +467,7 @@ class App(tk.Tk):
             if self.motion_queue:
                 self.motion_queue.close()
             self.finish_target_edit(cancel=True)
-            self.queue_text.set('正在停止并关闭使能；待执行指令已清空')
+            self.queue_text.set('正在停止并关闭使能；待更新目标已清空')
             self.update_buttons()
             self.status.set('已请求停止；正在减速并关闭全部使能，请勿强制结束程序。')
             self.append('停止请求已发送。')
@@ -488,19 +485,20 @@ class App(tk.Tk):
                     if self.continuous_active and self.motion_queue and self.motion_queue.closed:
                         self.continuous_ready = False
                         self.continuous_enabled.set(False)
-                        self.queue_text.set('正在关闭使能并恢复参数；待执行指令已清空')
+                        self.queue_text.set('正在关闭使能并恢复参数；待更新目标已清空')
                         self.finish_target_edit(cancel=True)
                         self.update_buttons()
                 elif kind == 'continuous_ready':
                     if self.continuous_active and not self.stop_token.is_set():
                         self.continuous_ready = True
-                        self.queue_text.set('已使能；待执行 0 条；空闲保持使能')
+                        self.queue_text.set('已使能；可立即更新目标；空闲保持使能')
                         self.update_buttons()
                 elif kind == 'command':
-                    if self.continuous_active and not self.stop_token.is_set():
+                    if (self.continuous_active and not self.stop_token.is_set()
+                            and event['number'] >= self.motion_queue.number):
                         text = f"指令 #{event['number']} " + ('执行中' if event['stage'] == 'started' else '已完成，保持使能')
                         self.status.set(text)
-                        self.queue_text.set(text + f"；待执行 {self.motion_queue.pending()} 条")
+                        self.queue_text.set(text + '；新指令可立即更新目标')
                         self.append(text)
                 elif kind == 'status':
                     for axis in event['axes']:
