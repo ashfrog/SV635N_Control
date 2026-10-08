@@ -25,10 +25,12 @@ RX_MAP = [0x60400010, 0x607A0020, 0x60B80010, 0x60FE0120]
 TX_MAP = [0x603F0010, 0x60410010, 0x60640020, 0x60770010,
           0x60F40020, 0x60B90010, 0x60BA0020, 0x60BC0020, 0x60FD0020]
 LOCAL_LOCK = threading.Lock()
-MAX_RPM = 60
-MAX_ACCELERATION_RPM_S = 120
+DEFAULT_CONTINUOUS_RPM = 60
+DEFAULT_CONTINUOUS_ACCELERATION_RPM_S = 120
 MAX_MOVE_DEGREES = 3600
 MAX_MOVE_SECONDS = 120
+PDO_MAX_FAILED_EXCHANGES = 5
+PDO_RECOVERY_SECONDS = .010
 
 
 class ControlError(RuntimeError):
@@ -74,30 +76,37 @@ class Move:
     @property
     def estimated_seconds(self):
         """Rest-to-rest PP duration, including triangular short-distance profiles."""
-        distance = abs(self.degrees) / 360
-        velocity = self.rpm / 60
-        acceleration = self.acceleration_rpm_s / 60
-        if distance <= velocity * velocity / acceleration:
-            return 2 * math.sqrt(distance / acceleration)
-        return distance / velocity + velocity / acceleration
+        distance = abs(self.degrees) / 6
+        triangular_peak = math.sqrt(distance) * math.sqrt(self.acceleration_rpm_s)
+        if self.rpm >= triangular_peak:
+            return 2 * math.sqrt(distance) / math.sqrt(self.acceleration_rpm_s)
+        return distance / self.rpm + self.rpm / self.acceleration_rpm_s
 
     @property
     def peak_rpm(self):
-        return min(self.rpm, math.sqrt(abs(self.degrees) * self.acceleration_rpm_s / 6))
+        return min(self.rpm, math.sqrt(abs(self.degrees) / 6) * math.sqrt(self.acceleration_rpm_s))
 
     def validate(self):
-        if isinstance(self.order, bool) or not isinstance(self.order, int) or self.order < 1:
-            raise ControlError('电机位置编号无效，请重新扫描。')
+        self.validate_profile()
         if not math.isfinite(self.degrees) or not .1 <= abs(self.degrees) <= MAX_MOVE_DEGREES:
             raise ControlError('角度范围：0.1～3600°，正负表示方向。')
-        if not math.isfinite(self.rpm) or not .1 <= self.rpm <= MAX_RPM:
-            raise ControlError('本调试工具速度范围：0.1～60 rpm。')
-        if not math.isfinite(self.acceleration_rpm_s) or not 1 <= self.acceleration_rpm_s <= MAX_ACCELERATION_RPM_S:
-            raise ControlError('本调试工具加减速度范围：1～120 rpm/s。')
-        if self.encoder_bits != 23:
-            raise ControlError('当前版本只接受已核对的 A3 / 23位电机，其他编码器须另行核对。')
         if self.estimated_seconds > MAX_MOVE_SECONDS:
             raise ControlError('单次预计运动超过 120 秒，请减少角度或提高速度。')
+
+    def validate_profile(self):
+        """Speed and acceleration have no software range beyond positive finite values."""
+        if isinstance(self.order, bool) or not isinstance(self.order, int) or self.order < 1:
+            raise ControlError('电机位置编号无效，请重新扫描。')
+        for value, label, unit in ((self.rpm, '速度', 'rpm'),
+                                   (self.acceleration_rpm_s, '加减速度', 'rpm/s')):
+            try:
+                valid = type(value) in (int, float) and math.isfinite(value) and value > 0
+            except OverflowError:
+                valid = False
+            if not valid:
+                raise ControlError(f'{label}必须为大于 0 的有限数值（{unit}）。')
+        if self.encoder_bits != 23:
+            raise ControlError('当前版本只接受已核对的 A3 / 23位电机，其他编码器须另行核对。')
 
 
 def read(slave, index, sub=0, signed=False):
@@ -316,10 +325,14 @@ class _Session:
                          tolerance=max(2, round(counts * .2 / 360)))
                 if not 1 <= abs(a['delta']) < 2**31 or counts <= 0:
                     raise ControlError(f'ID {d.alias} 位移超出可用指令范围。')
-                velocity = max(1, round(counts * p.rpm / 60))
-                accel = max(1, round(counts * p.acceleration_rpm_s / 60))
+                raw_velocity = counts * (p.rpm / 60)
+                raw_accel = counts * (p.acceleration_rpm_s / 60)
+                if not math.isfinite(raw_velocity) or not math.isfinite(raw_accel):
+                    raise ControlError(f'ID {d.alias} 速度/加速度超出驱动器 32 位参数范围。')
+                velocity = max(1, round(raw_velocity))
+                accel = max(1, round(raw_accel))
                 if max(velocity, accel) > 0xFFFFFFFF:
-                    raise ControlError(f'ID {d.alias} 速度/加速度超出指令范围。')
+                    raise ControlError(f'ID {d.alias} 速度/加速度超出驱动器 32 位参数范围。')
                 a['changes'] = [(0x6081, 4, velocity, False), (0x6083, 4, accel, False),
                                 (0x6084, 4, accel, False), (0x6085, 4, accel, False),
                                 (0x6060, 1, 1, True)]
@@ -422,21 +435,47 @@ class _Session:
             raise ControlError(f'主机周期延迟 {late:.1f} ms，停止全部电机。')
         for a in self.axes:
             a['slave'].output = struct.pack('<HiHI', a['cw'], a['target'], 0, 0)
-        self.master.send_processdata()
-        if any(a['request'] and a['cw'] & 0x18 == 0x18 for a in self.axes):
-            self.report['motion_triggered'] = True
-        wkc = self.master.receive_processdata(2_000)
-        t = time.perf_counter() - self.started
-        row = [t, wkc, late]
-        for a in self.axes:
-            a['last'] = struct.unpack_from('<HHi', a['slave'].input)
-            self.update_feedback(a)
-            row.extend([a['cw'], a['target'], *a['last']])
-        self.trace.append(row)
-        self.last_wkc = wkc
-        if checked:
+        exchange_started = time.perf_counter()
+        failures = 0
+        while True:
+            if cancellable:
+                self.check_stop()
+            # Resend the same controlword/target: no new setpoint edge, and no
+            # handshake or target updates until a complete feedback frame arrives.
+            self.master.send_processdata()
+            if any(a['request'] and a['cw'] & 0x18 == 0x18 for a in self.axes):
+                self.report['motion_triggered'] = True
+            wkc = self.master.receive_processdata(2_000)
+            t = time.perf_counter() - self.started
+            row = [t, wkc, late]
+            for a in self.axes:
+                feedback = struct.unpack_from('<HHi', a['slave'].input)
+                row.extend([a['cw'], a['target'], *feedback])
+                if wkc == self.expected or not checked:
+                    a['last'] = feedback
+                if wkc == self.expected:
+                    self.update_feedback(a)
+            self.trace.append(row)
+            self.last_wkc = wkc
+            if not checked:
+                break
+            elapsed = time.perf_counter() - exchange_started
             if wkc != self.expected:
-                raise ControlError(f'通信 WKC={wkc}，期望 {self.expected}，停止全部电机。')
+                failures += 1
+                self.report['pdo_failed_exchanges'] = self.report.get('pdo_failed_exchanges', 0) + 1
+                if failures >= PDO_MAX_FAILED_EXCHANGES or elapsed >= PDO_RECOVERY_SECONDS:
+                    raise ControlError(f'通信 WKC={wkc}，期望 {self.expected}；'
+                                       f'连续 {failures} 次异常，停止全部电机。')
+                continue
+            if failures:
+                if elapsed >= PDO_RECOVERY_SECONDS:
+                    raise ControlError('通信恢复超过 10 ms，停止全部电机。')
+                self.report['pdo_recoveries'] = self.report.get('pdo_recoveries', 0) + 1
+                self.report['maximum_pdo_recovery_ms'] = max(
+                    self.report.get('maximum_pdo_recovery_ms', 0), elapsed * 1000)
+                self.emit('phase', text=f'通信短时异常已恢复（重试 {failures} 次），继续运行')
+            break
+        if checked:
             for a in self.axes:
                 error, sw, actual = a['last']
                 label = f"ID {a['device'].alias}"
@@ -539,7 +578,8 @@ class _Session:
                 self.op_required = False
                 if self.armed:
                     self.command(2)
-                    self.hold(max((p.rpm / p.acceleration_rpm_s for p in self.requests.values()), default=0) + .3,
+                    self.hold(max((a['report']['profile_velocity_counts_s'] /
+                                   a['report']['profile_acceleration_counts_s2'] for a in self.selected()), default=0) + .3,
                               checked=False, cancellable=False)
                 for a in self.axes:
                     a['cw'] = 0

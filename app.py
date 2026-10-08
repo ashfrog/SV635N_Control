@@ -2,6 +2,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 import json
+import math
 import os
 from pathlib import Path
 import queue
@@ -10,7 +11,8 @@ import threading
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from core import DEFAULT_ADAPTER, MAX_ACCELERATION_RPM_S, MAX_RPM, EtherCATController, Move
+from core import (DEFAULT_ADAPTER, DEFAULT_CONTINUOUS_ACCELERATION_RPM_S,
+                  DEFAULT_CONTINUOUS_RPM, EtherCATController, Move)
 from continuous_control import MotionQueue, run_continuous
 
 
@@ -51,8 +53,8 @@ class App(tk.Tk):
         self.adapter_names = []
         self.adapter_var = tk.StringVar()
         self.angle = tk.StringVar(value='30')
-        self.rpm = tk.StringVar(value=str(MAX_RPM))
-        self.acceleration = tk.StringVar(value=str(MAX_ACCELERATION_RPM_S))
+        self.rpm = tk.StringVar(value=str(DEFAULT_CONTINUOUS_RPM))
+        self.acceleration = tk.StringVar(value=str(DEFAULT_CONTINUOUS_ACCELERATION_RPM_S))
         self.direction = tk.StringVar(value='forward')
         self.encoder = tk.StringVar(value='A3 · 23位（逐轴核对）')
         self.ready = tk.BooleanVar(value=False)
@@ -62,6 +64,11 @@ class App(tk.Tk):
         self.queue_text = tk.StringVar(value='连续使能未开启')
         self.target_values = {}
         self.target_editor = None
+        self.slider_center = tk.StringVar(value='0')
+        self.slider_span = tk.StringVar(value='360')
+        self.slider_text = tk.StringVar(value='目标偏移 0.00°')
+        self.slider_syncing = False
+        self.slider_error = None
         self.status = tk.StringVar(value='请选择专用 EtherCAT 网卡，然后扫描电机。')
         self.selection_text = tk.StringVar(value='尚未扫描')
         self.summary = tk.StringVar()
@@ -114,7 +121,7 @@ class App(tk.Tk):
         self.all_button.pack(side='right', padx=(8, 0))
         self.none_button = ttk.Button(toolbar, text='取消全选', command=lambda: self.select_all(False))
         self.none_button.pack(side='right')
-        self.tree = ttk.Treeview(root, columns=('choose', 'order', 'id', 'name', 'gear', 'position', 'target', 'state'), show='headings', height=4, selectmode='none')
+        self.tree = ttk.Treeview(root, columns=('choose', 'order', 'id', 'name', 'gear', 'position', 'target', 'state'), show='headings', height=3, selectmode='none')
         for name, label, width in [('choose', '选择', 50), ('order', '链路位置', 75), ('id', 'ID / H0E.21', 95),
                                     ('name', 'H00.00 / 正指令方向', 180), ('gear', '齿轮比', 70), ('position', '位置计数', 125),
                                     ('target', '目标偏移 °', 105), ('state', '状态', 195)]:
@@ -126,8 +133,10 @@ class App(tk.Tk):
         self.tree.tag_configure('chosen', background='#e9f2ff')
         self.tree.tag_configure('fault', foreground='#bb2025')
         ttk.Label(root, textvariable=self.selection_text, style='Subtitle.TLabel').pack(anchor='w', pady=(0, 12))
-        card = ttk.Frame(root, style='Card.TFrame', padding=12)
-        card.pack(fill='x')
+        self.control_tabs = ttk.Notebook(root)
+        self.control_tabs.pack(fill='x')
+        card = ttk.Frame(self.control_tabs, style='Card.TFrame', padding=12)
+        self.control_tabs.add(card, text='运动参数 / 相对指令')
         ttk.Label(card, text='2  设置选中电机的运动参数', style='Card.TLabel', font=('Microsoft YaHei UI', 11, 'bold')).grid(row=0, column=0, columnspan=7, sticky='w', pady=(0, 8))
         ttk.Label(card, text='方向', style='Card.TLabel').grid(row=1, column=0, sticky='w')
         self.forward = ttk.Radiobutton(card, text='顺时针（+）', variable=self.direction, value='forward')
@@ -143,13 +152,37 @@ class App(tk.Tk):
         ttk.Label(card, text='加减速度', style='Card.TLabel').grid(row=2, column=0, sticky='w', pady=(8, 0))
         self.acceleration_entry = ttk.Entry(card, textvariable=self.acceleration, width=10)
         self.acceleration_entry.grid(row=2, column=1, sticky='w', padx=8, pady=(8, 0))
-        ttk.Label(card, text='rpm/s（1～120，加速与减速相同）', style='Card.TLabel').grid(row=2, column=2, columnspan=5, sticky='w', pady=(8, 0))
+        ttk.Label(card, text='rpm/s（正数，无软件上限；加速与减速相同）', style='Card.TLabel').grid(row=2, column=2, columnspan=5, sticky='w', pady=(8, 0))
         ttk.Label(card, text='电机编码器', style='Card.TLabel').grid(row=3, column=0, sticky='w', pady=(8, 0))
         self.encoder_box = ttk.Combobox(card, textvariable=self.encoder, values=('A3 · 23位（逐轴核对）',), state='readonly', width=23)
         self.encoder_box.grid(row=3, column=1, columnspan=2, sticky='w', padx=8, pady=(8, 0))
         ttk.Label(card, text='选中轴须 H00.00=14101；本版本仅支持已核对的 A3。', style='Card.TLabel').grid(row=3, column=3, columnspan=4, sticky='w', pady=(8, 0))
         ttk.Label(card, textvariable=self.summary, style='Card.TLabel', wraplength=960).grid(row=4, column=0, columnspan=7, sticky='w', pady=(10, 0))
-        ttk.Label(root, text='角度 0.1～3600°（360° = 1圈） | 速度 0.1～60 rpm | 方向从轴端看，程序按各轴 H02.02 自动换算', style='Subtitle.TLabel').pack(anchor='w', pady=(9, 8))
+        slider_card = ttk.Frame(self.control_tabs, style='Card.TFrame', padding=12)
+        self.control_tabs.add(slider_card, text='实时目标位置滑块')
+        slider_card.columnconfigure(1, weight=1)
+        row = ttk.Frame(slider_card, style='Card.TFrame')
+        row.grid(row=0, column=0, columnspan=3, sticky='ew')
+        ttk.Label(row, text='控制对象：列表中所有勾选的电机', style='Card.TLabel').pack(side='left')
+        ttk.Label(row, textvariable=self.slider_text, style='Card.TLabel').pack(side='right')
+        self.target_slider = ttk.Scale(slider_card, from_=-360, to=360, orient='horizontal', command=self.slider_changed)
+        self.target_slider.grid(row=1, column=0, columnspan=3, sticky='ew', pady=(18, 12))
+        settings = ttk.Frame(slider_card, style='Card.TFrame')
+        settings.grid(row=2, column=0, columnspan=3, sticky='w')
+        ttk.Label(settings, text='显示中心 °', style='Card.TLabel').pack(side='left', padx=(0, 6))
+        self.slider_center_entry = ttk.Entry(settings, textvariable=self.slider_center, width=11)
+        self.slider_center_entry.pack(side='left')
+        ttk.Label(settings, text='显示跨度 ±°', style='Card.TLabel').pack(side='left', padx=(14, 6))
+        self.slider_span_entry = ttk.Entry(settings, textvariable=self.slider_span, width=11)
+        self.slider_span_entry.pack(side='left')
+        self.slider_range_button = ttk.Button(settings, text='设置显示范围', command=self.apply_slider_range)
+        self.slider_range_button.pack(side='left', padx=10)
+        self.slider_center_button = ttk.Button(settings, text='以当前目标居中', command=lambda: self.sync_slider(recenter=True))
+        self.slider_center_button.pack(side='left')
+        ttk.Label(slider_card, text='开启连续使能后，拖动即同时更新列表中所有勾选电机的目标偏移。'
+                  '\n未使能时仅编辑目标。显示范围可调整，不限制累计运动范围。',
+                  style='Card.TLabel', wraplength=960).grid(row=3, column=0, columnspan=3, sticky='w', pady=(12, 0))
+        ttk.Label(root, text='角度 0.1～3600°（360° = 1圈） | 速度、加减速度为正数，无软件上限 | 方向按各轴 H02.02 换算', style='Subtitle.TLabel').pack(anchor='w', pady=(9, 8))
         self.ready_box = ttk.Checkbutton(root, text='已确认：电机固定、轴端空载、手已离开，且可随时断电', variable=self.ready, command=self.update_buttons)
         self.ready_box.pack(anchor='w')
         actions = ttk.Frame(root)
@@ -225,6 +258,10 @@ class App(tk.Tk):
             (not self.busy and available and self.ready.get()) else 'disabled')
         for button in (self.target_button, self.origin_button):
             button.configure(state='normal' if self.continuous_ready else 'disabled')
+        slider_available = available and (not self.busy or self.continuous_ready)
+        for widget in (self.target_slider, self.slider_center_entry, self.slider_span_entry,
+                       self.slider_range_button, self.slider_center_button):
+            widget.configure(state='normal' if slider_available else 'disabled')
 
     def refresh_adapters(self):
         if self.busy:
@@ -258,6 +295,7 @@ class App(tk.Tk):
         self.selected.clear()
         self.target_values.clear()
         self.tree.delete(*self.tree.get_children())
+        self.sync_slider(recenter=True)
         self.ready.set(False)
         self.selection_text.set('网卡已改变，请重新扫描。')
         self.update_buttons()
@@ -293,6 +331,7 @@ class App(tk.Tk):
         self.selected.clear()
         self.target_values.clear()
         self.tree.delete(*self.tree.get_children())
+        self.sync_slider(recenter=True)
         self.selection_text.set('扫描中；电机不会使能。')
         self.submit('scan', controller.scan)
 
@@ -328,6 +367,7 @@ class App(tk.Tk):
             self.tree.item(str(d.order), tags=('fault',) if d.error_code else ('chosen',) if chosen else ())
         labels = [f'ID {d.alias}（位置 {d.order}）' for d in self.devices if d.order in self.selected]
         self.selection_text.set('已选：' + '、'.join(labels) if labels else '点击任意电机行勾选；可多选同时运行。ID 0 表示自动分配，按链路位置识别。')
+        self.sync_slider(recenter=True)
         self.update_buttons()
 
     def run_motion(self, dry_run):
@@ -386,6 +426,7 @@ class App(tk.Tk):
         self.continuous_ready = False
         for order in orders:
             self.set_target(order, '0')
+        self.sync_slider(recenter=True)
         self.queue_text.set('正在开启连续使能；不会自动运动')
         self.update_summary()
         self.append(f'开启连续使能：链路位置 {orders}；'
@@ -397,6 +438,80 @@ class App(tk.Tk):
         self.target_values[order] = value
         if self.tree.exists(str(order)):
             self.tree.set(str(order), 'target', value)
+
+    def sync_slider(self, recenter=False):
+        orders = sorted(self.selected)
+        if not orders:
+            self.slider_text.set('请在列表中勾选电机')
+            return
+        try:
+            values = [float(self.target_values.get(order, '0')) for order in orders]
+            value = values[0]
+            span = float(self.slider_span.get())
+            if not math.isfinite(value) or not math.isfinite(span) or span <= 0:
+                return
+            low, high = float(self.target_slider.cget('from')), float(self.target_slider.cget('to'))
+            if recenter or value < low or value > high:
+                self.slider_center.set(str(value))
+                low, high = value - span, value + span
+            if not math.isfinite(low) or not math.isfinite(high) or low >= high:
+                return
+            self.slider_syncing = True
+            try:
+                self.target_slider.configure(from_=low, to=high)
+                self.target_slider.set(max(low, min(high, value)))
+                self.slider_text.set(f'共同目标偏移 {value:.2f}°' if all(x == value for x in values)
+                                     else '各轴目标不同；拖动将统一目标偏移')
+            finally:
+                self.slider_syncing = False
+        except (ValueError, OverflowError):
+            return
+
+    def apply_slider_range(self):
+        try:
+            center, span = float(self.slider_center.get()), float(self.slider_span.get())
+            low, high = center - span, center + span
+            if not all(math.isfinite(x) for x in (center, span, low, high)) or span <= 0 or low >= high:
+                raise ValueError('显示中心须为有限数值，显示跨度须为正数。')
+            self.slider_syncing = True
+            try:
+                self.target_slider.configure(from_=low, to=high)
+                order = min(self.selected) if self.selected else None
+                value = max(low, min(high, float(self.target_values.get(order, '0'))))
+                self.target_slider.set(value)
+                self.slider_text.set(f'滑块位置 {value:.2f}°（拖动提交）')
+            finally:
+                self.slider_syncing = False
+        except (ValueError, OverflowError) as exc:
+            messagebox.showerror('滑块显示范围', str(exc), parent=self)
+
+    def slider_changed(self, raw_value):
+        if self.slider_syncing or (self.busy and not self.continuous_ready):
+            return
+        orders = sorted(self.selected)
+        if not orders:
+            return
+        try:
+            value = float(raw_value)
+            if not math.isfinite(value):
+                raise ValueError('目标必须为有限数值。')
+            self.finish_target_edit(cancel=True)
+            if self.continuous_ready:
+                values = [value] * len(self.motion_queue.orders)
+                if tuple(values) != self.motion_queue.planned:
+                    self.show_queued(self.motion_queue.submit(values), log=False)
+            else:
+                for order in orders:
+                    self.set_target(order, str(value))
+            self.slider_text.set(f'共同目标偏移 {value:.2f}°')
+            self.slider_error = None
+        except (ValueError, OverflowError, RuntimeError) as exc:
+            text = '滑块目标未更新：' + str(exc)
+            self.status.set(text)
+            if text != self.slider_error:
+                self.append(text)
+                self.slider_error = text
+            self.sync_slider()
 
     def edit_target(self, event):
         if self.tree.identify_column(event.x) != '#7' or (self.busy and not self.continuous_ready):
@@ -428,11 +543,13 @@ class App(tk.Tk):
             editor.destroy()
         return 'break'
 
-    def show_queued(self, command):
+    def show_queued(self, command, log=True):
         for order, target in zip(self.motion_queue.orders, command.targets):
-            self.set_target(order, f'{target:g}')
+            self.set_target(order, str(target))
         self.queue_text.set(f'最新指令 #{command.number}；目标已更新')
-        self.append(f'指令 #{command.number} 已更新，目标偏移：{list(command.targets)}°。')
+        self.sync_slider()
+        if log:
+            self.append(f'指令 #{command.number} 已更新，目标偏移：{list(command.targets)}°。')
 
     def queue_relative(self):
         try:

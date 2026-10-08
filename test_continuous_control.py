@@ -4,12 +4,24 @@ import threading
 import time
 import unittest
 
-from core import ControlError, EtherCATController, displacement
+from core import ControlError, EtherCATController, Move, Stopped, _Session, displacement
 from continuous_control import MotionQueue, run_continuous
 from test_platform_control import FakeMaster
 
 
 class QueueTests(unittest.TestCase):
+    def test_profile_has_no_software_upper_or_lower_range(self):
+        for rpm, acceleration in ((3000, 6000), (.05, .5), (1e308, 1e308), (5e-324, 5e-324)):
+            commands = MotionQueue([1], rpm=rpm, acceleration=acceleration)
+            self.assertEqual((commands.rpm, commands.acceleration), (rpm, acceleration))
+        Move(1, .1, .05, acceleration_rpm_s=.5).validate()
+        self.assertTrue(Move(1, 30, 1e308, acceleration_rpm_s=1e308).estimated_seconds > 0)
+        for value in (0, -1, float('inf'), float('nan'), True, None, 10**3000):
+            with self.assertRaises(ControlError):
+                MotionQueue([1], rpm=value)
+            with self.assertRaises(ControlError):
+                MotionQueue([1], acceleration=value)
+
     def test_latest_relative_projection_and_atomic_rejection(self):
         commands = MotionQueue([1, 2, 3])
         with self.assertRaises(ControlError):
@@ -64,7 +76,114 @@ class QueueTests(unittest.TestCase):
         self.assertEqual(commands.submit([100001]).targets, (100001,))
 
 
+class CommunicationTests(unittest.TestCase):
+    def session(self):
+        master = FakeMaster()
+        controller = EtherCATController('fake', master_factory=lambda: master)
+        devices = controller._discover(master)
+        session = _Session(controller, [Move(1)], devices, threading.Event(), lambda _: None, False)
+        session.expected = master.expected_wkc
+        session.axes = [dict(slave=slave, device=device, request=Move(device.order), cw=0x3F,
+                             target=slave.position, last=(0, 0x40, slave.position))
+                        for device, slave in zip(devices, master.slaves)]
+        return session, master
+
+    def test_transient_timeout_and_partial_wkc_retry_without_new_target_edge(self):
+        for bad_wkc in (-1, 0, 9):
+            with self.subTest(wkc=bad_wkc):
+                session, master = self.session()
+                calls, feedback = [], []
+                def receive(_):
+                    calls.append(1)
+                    if len(calls) == 1:
+                        # An incomplete frame must not update position or handshake state.
+                        master.slaves[0].input = struct.pack('<HHi', 1, 8, -999) + bytes(20)
+                        return bad_wkc
+                    return master.expected_wkc
+                master.receive_processdata = receive
+                session.update_feedback = lambda axis: feedback.append(axis['last'])
+                session.tick()
+                self.assertEqual(len(calls), 2)
+                self.assertEqual(len(feedback), 4)
+                self.assertNotIn((1, 8, -999), feedback)
+                self.assertEqual(session.report['pdo_failed_exchanges'], 1)
+                self.assertEqual(session.report['pdo_recoveries'], 1)
+                self.assertTrue(all(len(s.targets) == 1 for s in master.slaves))
+
+    def test_persistent_wkc_failure_is_bounded(self):
+        session, master = self.session()
+        calls = []
+        def receive(_):
+            calls.append(1)
+            return -1
+        master.receive_processdata = receive
+        with self.assertRaisesRegex(ControlError, 'WKC=-1'):
+            session.tick()
+        self.assertLessEqual(len(calls), 5)
+        self.assertNotIn('pdo_recoveries', session.report)
+        self.assertEqual(session.axes[0]['last'][1], 0x40)
+
+    def test_stop_prevents_retry_and_slow_recovery_still_stops(self):
+        session, master = self.session()
+        calls = []
+        def stopped_receive(_):
+            calls.append(1)
+            session.stop.set()
+            return -1
+        master.receive_processdata = stopped_receive
+        with self.assertRaises(Stopped):
+            session.tick()
+        self.assertEqual(len(calls), 1)
+
+        session, master = self.session()
+        def slow_receive(_):
+            time.sleep(.012)
+            return -1
+        master.receive_processdata = slow_receive
+        with self.assertRaises(ControlError):
+            session.tick()
+        self.assertEqual(session.report['pdo_failed_exchanges'], 1)
+
+    def test_alarm_after_recovery_is_not_ignored(self):
+        session, master = self.session()
+        calls = []
+        def receive(_):
+            calls.append(1)
+            if len(calls) == 1:
+                return -1
+            slave = master.slaves[0]
+            slave.input = struct.pack('<HHi', 1, slave.sw | 8, slave.position) + bytes(20)
+            return master.expected_wkc
+        master.receive_processdata = receive
+        with self.assertRaisesRegex(ControlError, '报警'):
+            session.tick()
+
+
 class SessionTests(unittest.TestCase):
+    def test_transient_wkc_during_target_ack_continues_and_restores(self):
+        master, controller, devices = self.make_controller()
+        commands = MotionQueue([1, 2, 3])
+        stop = threading.Event()
+        failed = False
+        def receive(_):
+            nonlocal failed
+            if master.slaves[0].targets and not failed:
+                failed = True
+                return -1
+            return master.expected_wkc
+        master.receive_processdata = receive
+        def callback(event):
+            if event['kind'] == 'continuous_ready':
+                commands.submit([1, 2, 3])
+            elif event['kind'] == 'command' and event['stage'] == 'completed':
+                stop.set()
+        report = run_continuous(controller, devices, commands, stop, callback)
+        self.assertTrue(report['stopped'], report)
+        self.assertEqual(report['completed_commands'], 1)
+        self.assertEqual(report['pdo_recoveries'], 1)
+        self.assertTrue(all(len(s.targets) == 1 for s in master.slaves[:3]))
+        self.assert_clean(master, report, (1, 2, 3))
+
     def make_controller(self):
         master = FakeMaster()
         controller = EtherCATController('fake', master_factory=lambda: master)
@@ -83,6 +202,40 @@ class SessionTests(unittest.TestCase):
             else:
                 self.assertFalse(slave.targets)
                 self.assertTrue(all(word == 0 for word in slave.words))
+
+    def test_high_profile_and_tiny_positive_profile_use_native_parameters(self):
+        for rpm, acceleration in ((3000, 6000), (5e-324, 5e-324)):
+            with self.subTest(rpm=rpm):
+                master, controller, devices = self.make_controller()
+                commands = MotionQueue([1], rpm=rpm, acceleration=acceleration)
+                stop = threading.Event()
+                def callback(event):
+                    if event['kind'] == 'continuous_ready':
+                        stop.set()
+                report = run_continuous(controller, devices, commands, stop, callback)
+                self.assertTrue(report['stopped'], report)
+                axis = report['axes'][0]
+                self.assertEqual(axis['profile_velocity_counts_s'], max(1, round(2**23 * (rpm / 60))))
+                self.assertEqual(axis['profile_acceleration_counts_s2'], max(1, round(2**23 * (acceleration / 60))))
+                self.assert_clean(master, report, (1,))
+
+    def test_native_overflow_rejected_before_parameter_writes_or_enable(self):
+        native_overflow = (2**32 * 60) / 2**23
+        for rpm, acceleration in ((native_overflow, 120), (60, native_overflow), (1e308, 120), (60, 1e308)):
+            with self.subTest(rpm=rpm, acceleration=acceleration):
+                master, controller, devices = self.make_controller()
+                writes = []
+                for slave in master.slaves:
+                    original = slave.sdo_write
+                    def record_write(index, sub, data, original=original):
+                        writes.append(index)
+                        original(index, sub, data)
+                    slave.sdo_write = record_write
+                report = run_continuous(controller, devices, MotionQueue([1], rpm=rpm, acceleration=acceleration))
+                self.assertIn('32 位', report.get('error', ''), report)
+                self.assertFalse(report['motion_triggered'])
+                self.assertFalse(writes)
+                self.assertTrue(master.closed)
 
     def test_enable_holds_three_axes_and_idle_stays_enabled(self):
         master, controller, devices = self.make_controller()

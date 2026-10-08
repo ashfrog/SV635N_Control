@@ -204,7 +204,7 @@ class SessionTests(unittest.TestCase):
                             slave = master.slaves[0]
                             slave.position = (session.axes[0]['origin'] + 2**23 + 2**31) % 2**32 - 2**31
                             slave.input = struct.pack('<HHi', 0, slave.sw, slave.position) + bytes(20)
-                    elif fired and fault == 'wkc':
+                    elif fired and fault == 'wkc' and master.slaves[0].words[-1] & 0xF != 15:
                         master.expected_wkc = 12  # Recover transport for cleanup.
                 master.send_processdata = exchange
                 report = session.run()

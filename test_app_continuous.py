@@ -120,6 +120,72 @@ class AppTests(unittest.TestCase):
         self.assertFalse(self.window.continuous_ready)
         self.assertEqual(self.window.start_button.cget('text'), '开始单次运行')
 
+    def test_live_slider_controls_checked_motors_and_range_changes_do_not_move(self):
+        self.window.selected = {1, 3}
+        self.window.render_selection()
+        self.enable()
+        commands = self.window.motion_queue
+        self.assertEqual(commands.number, 0)
+        self.window.control_tabs.select(1)
+        self.window.update()
+        self.window.target_slider.set(25)
+        self.assertEqual(commands.planned, (25, 25))
+        self.assertEqual(self.window.target_values[2], '0')
+        self.assertFalse(self.master.slaves[1].targets)
+        self.window.sync_slider(recenter=True)
+        self.window.target_slider.set(-12)
+        self.assertEqual(commands.planned, (-12, -12))
+        number = commands.number
+        self.window.slider_center.set('10000')
+        self.window.slider_span.set('500')
+        self.window.apply_slider_range()
+        self.assertEqual(commands.number, number)
+        self.window.target_slider.set(10001)
+        self.assertEqual(commands.planned, (10001, 10001))
+        self.pump(lambda: f'指令 #{commands.number} 已完成' in self.window.queue_text.get())
+        self.assertTrue(self.window.continuous_ready)
+        self.window.stop()
+        number = commands.number
+        self.window.slider_changed('0')
+        self.assertEqual(commands.number, number)
+        self.pump(lambda: not self.window.busy)
+        self.assertFalse(self.master.slaves[1].targets)
+
+    def test_slider_selection_change_and_mixed_targets_do_not_send(self):
+        self.window.target_slider.set(40)
+        self.window.selected = {2}
+        self.window.render_selection()
+        self.window.target_slider.set(-10)
+        self.assertEqual([float(self.window.target_values[n]) for n in (1, 2, 3)], [40, -10, 40])
+        self.window.selected = {1, 2, 3}
+        self.window.render_selection()
+        self.assertIn('各轴目标不同', self.window.slider_text.get())
+        self.enable()
+        self.window.set_target(1, '1')
+        self.window.set_target(2, '2')
+        self.window.set_target(3, '3')
+        self.window.send_targets()
+        number = self.window.motion_queue.number
+        self.window.sync_slider(recenter=True)
+        self.assertEqual(self.window.motion_queue.number, number)
+        self.assertEqual(self.window.motion_queue.planned, (1, 2, 3))
+        self.window.target_slider.set(4)
+        self.assertEqual(self.window.motion_queue.planned, (4, 4, 4))
+
+    def test_disabled_slider_only_edits_target(self):
+        self.window.target_slider.set(40)
+        self.assertEqual(float(self.window.target_values[1]), 40)
+        self.assertFalse(any(slave.targets for slave in self.master.slaves))
+        self.assertFalse(self.window.busy)
+        self.window.rpm.set('3000')
+        self.window.acceleration.set('6000')
+        self.enable()
+        self.assertEqual(self.window.motion_queue.planned, (0, 0, 0))
+        self.assertEqual(self.window.motion_queue.number, 0)
+        self.window.target_slider.set(10)
+        self.pump(lambda: '指令 #1 已完成' in self.window.queue_text.get())
+        self.assertTrue(all(not (slave.sw & 8) for slave in self.master.slaves))
+
 
 if __name__ == '__main__':
     unittest.main()

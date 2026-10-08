@@ -9,7 +9,7 @@ import math
 import threading
 import time
 
-from core import (MAX_ACCELERATION_RPM_S, MAX_MOVE_SECONDS, MAX_RPM,
+from core import (DEFAULT_CONTINUOUS_ACCELERATION_RPM_S, DEFAULT_CONTINUOUS_RPM, MAX_MOVE_SECONDS,
                   ControlError, Move, Stopped, _Session, adapter_lock, displacement)
 
 
@@ -21,13 +21,13 @@ class MotionCommand:
 
 
 class MotionQueue:
-    def __init__(self, orders, rpm=MAX_RPM, acceleration=MAX_ACCELERATION_RPM_S):
+    def __init__(self, orders, rpm=DEFAULT_CONTINUOUS_RPM, acceleration=DEFAULT_CONTINUOUS_ACCELERATION_RPM_S):
         self.orders = tuple(orders)
         if (not self.orders or len(set(self.orders)) != len(self.orders)
                 or self.orders != tuple(sorted(self.orders))):
             raise ControlError('请选择不同的电机，按链路位置升序排列。')
         for order in self.orders:
-            Move(order, .1, rpm, acceleration_rpm_s=acceleration).validate()
+            Move(order, .1, rpm, acceleration_rpm_s=acceleration).validate_profile()
         self.rpm, self.acceleration = rpm, acceleration
         self.lock = threading.Lock()
         self.commands = deque()
@@ -118,8 +118,9 @@ class _ManualSession(_Session):
 
     def check_travel(self, a):
         # Monitor this command's path, without bounding the session's total travel.
-        braking_degrees = self.commands.rpm**2 / (12 * self.commands.acceleration)
-        margin = max(a['tolerance'] * 5, round(a['counts'] * (5 + braking_degrees) / 360))
+        velocity = a['report']['profile_velocity_counts_s']
+        acceleration = a['report']['profile_acceleration_counts_s2']
+        margin = max(a['tolerance'] * 5, round(a['counts'] * 5 / 360 + velocity**2 / (2 * acceleration)))
         low = min(a['command_start'], a['command_goal']) - margin
         high = max(a['command_start'], a['command_goal']) + margin
         if not low <= a['unwrapped_counts'] <= high:
@@ -192,6 +193,7 @@ class _ManualSession(_Session):
             deltas = [round(a['counts'] * value * a['direction_factor'] / 360)
                       for a, value in zip(self.selected(), request.targets)]
             duration = 0
+            braking_seconds = 0
             for a, delta in zip(self.selected(), deltas):
                 # Use absolute PP for moving updates: a relative target based on
                 # the last feedback would acquire an error while the motor moves
@@ -203,12 +205,15 @@ class _ManualSession(_Session):
                 a['command_start'] = a['unwrapped_counts']
                 a['command_goal'] = delta
                 duration = max(duration, Move(a['device'].order, abs(remaining) * 360 / a['counts'],
-                                              self.commands.rpm,
-                                              acceleration_rpm_s=self.commands.acceleration).estimated_seconds)
+                                              a['report']['profile_velocity_counts_s'] * 60 / a['counts'],
+                                              acceleration_rpm_s=a['report']['profile_acceleration_counts_s2'] * 60
+                                              / a['counts']).estimated_seconds)
+                braking_seconds = max(braking_seconds, a['report']['profile_velocity_counts_s'] /
+                                      a['report']['profile_acceleration_counts_s2'])
             self.command(0x3F)  # Absolute + change set immediately + new setpoint.
             stage, handshake_deadline = 'ack', time.monotonic() + 1
             expected = {a['device'].order: delta for a, delta in zip(self.selected(), deltas)}
-            arrival_deadline = time.monotonic() + duration + 2 * self.commands.rpm / self.commands.acceleration + 5
+            arrival_deadline = time.monotonic() + duration + 2 * braking_seconds + 5
 
     def cleanup(self):
         self.commands.close()  # Reject new GUI commands before disabling/restoring.

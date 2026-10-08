@@ -14,7 +14,7 @@ def main():
     parser.add_argument('--degrees', type=float, default=30, help='Signed angle: negative = reverse')
     parser.add_argument('--rpm', type=float, default=5)
     parser.add_argument('--acceleration-rpm-s', type=float, default=10,
-                        help='Symmetric acceleration/deceleration, 1..120 rpm/s (default: 10)')
+                        help='Positive acceleration/deceleration in rpm/s, no software upper limit (default: 10)')
     parser.add_argument('--encoder-bits', type=int, default=23, choices=(23, 26))
     parser.add_argument('--run', action='store_true', help='Perform physical motion; default is no enable')
     args = parser.parse_args()
