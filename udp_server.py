@@ -138,6 +138,10 @@ class UDPServer:
                             raise ControlError('targets_deg 必须是数组。')
                         response['accepted'] = self.service.command(packet.get('run_id'), packet.get('seq'),
                             packet.get('targets_deg') if kind == 'target' else None)
+                    elif kind == 'profile':
+                        response['accepted'] = self.service.command(packet.get('run_id'), packet.get('seq'),
+                            profile=dict(rpm=packet.get('rpm'),
+                                         acceleration_rpm_s=packet.get('acceleration_rpm_s')))
                     elif kind == 'disable':
                         # Stop wins even over reordered sequence numbers, but an
                         # old run must never stop a newly enabled run.
@@ -189,7 +193,7 @@ class UDPServer:
                     continue  # Windows UDP ICMP from a client that exited.
                 with self.lock:
                     self._expire()
-                    if self.owner and time.monotonic() - last_publish >= .1:
+                    if self.owner and time.monotonic() - last_publish >= .05:
                         self._send(dict(type='state', v=PROTOCOL_VERSION, **self._state()), self.owner)
                         last_publish = time.monotonic()
         except Exception:

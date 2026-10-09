@@ -94,9 +94,13 @@ def main():
     try:
         config=load_config(args.config)
         service=MotorService(config['adapter'],log_dir,config['heartbeat_timeout_s'],aps_options=config['aps'])
-        server=UDPServer(service,config['host'],config['port'],config['auth_key']).start()
+        # Publish the startup scan before the first client can enable or rescan.
+        # Bind first so a duplicate backend cannot start accessing the card.
+        with service.lock:
+            server=UDPServer(service,config['host'],config['port'],config['auth_key']).start()
+            service.scan()
         if args.headless:
-            print(f"SV635N UDP 后台已启动：{config['host']}:{server.port}，电机未使能。",flush=True)
+            print(f"SV635N UDP 后台已启动：{config['host']}:{server.port}，正在自动扫描 {config['adapter']}，电机未使能。",flush=True)
             while not quit_event.wait(.2):
                 if server.closed.is_set():
                     break

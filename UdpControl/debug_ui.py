@@ -1,6 +1,8 @@
 """Tk debugging client. All motor operations go through the UDP SDK."""
 from concurrent.futures import ThreadPoolExecutor
+import math
 import queue
+import threading
 import time
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -14,24 +16,41 @@ class DebugWindow:
         self.stop_callback = self.stop
         self.client = MotorClient(host, port, auth_key)
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='Debug-UDP')
+        self.motion_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='Debug-Motion')
         self.stop_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='UDP-Stop')
         self.stop_pending = False
         self.events = queue.Queue()
         self.pending = False
+        self.motion_pending = False
+        self.motion_run = None
+        self.auto_start = None
+        self.start_deadline = 0
+        self.start_cancel = threading.Event()
+        self.enable_pending = False
         self.latest_target = None
+        self.latest_profile = None
+        self.profile_run = None
+        self.syncing_profile = False
+        self.target_values = {}
+        self.target_run = None
+        self.target_editor = None
+        self.target_editor_order = None
+        self.slider_orders = [None]
         self.syncing = False
         self.state, self.selected = {}, set()
         self.last_query = 0
         self.last_feedback = 0
+        self.last_render = 0
+        self.rendered_serial = -1
         self.adapter_names = []
         self.adapter, self.rpm, self.acceleration = tk.StringVar(), tk.StringVar(value='60'), tk.StringVar(value='120')
         self.center, self.span = tk.StringVar(value='0'), tk.StringVar(value='360')
         self.position = tk.StringVar(value='共同目标偏移 0°')
+        self.slider_axis = tk.StringVar(value='全部使能轴（共同目标）')
         self.status = tk.StringVar(value='正在连接后台…')
-        self.ready = tk.BooleanVar(value=False)
         root.title('SV635N · UDP 电机控制客户端')
-        root.geometry('1200x740')
-        root.minsize(1100, 680)
+        root.geometry('1280x860')
+        root.minsize(1180, 820)
         root.protocol('WM_DELETE_WINDOW', self.exit_callback)
         root.bind('<Escape>', lambda _: self.stop_callback())
         style = ttk.Style(root)
@@ -59,10 +78,10 @@ class DebugWindow:
         self.adapters_button.pack(side='left')
         self.scan_button = ttk.Button(network, text='扫描电机', command=self.scan)
         self.scan_button.pack(side='left', padx=(8, 0))
-        self.tree = ttk.Treeview(frame, columns=('checked','order','id','name','position','travel','state',
+        self.tree = ttk.Treeview(frame, columns=('checked','order','id','name','position','travel','target','state',
                                                 'limit','inputs','retraction'), show='headings', height=5)
         for key, label, width in (('checked','选择',50),('order','链路位置',70),('id','ID',50),('name','电机 / 编号',190),
-                                  ('position','位置计数',100),('travel','偏移 °',85),('state','反馈状态',80),
+                                  ('position','位置计数',95),('travel','偏移 °',80),('target','目标偏移 °',100),('state','反馈状态',80),
                                   ('limit','推出端限位',145),('inputs','DI1 / DI2 · 正/负限位',170),
                                   ('retraction','缩回端限位',145)):
             self.tree.heading(key, text=label)
@@ -71,19 +90,42 @@ class DebugWindow:
         self.tree.tag_configure('limit_triggered', background='#ffcccc', foreground='#8b0000')
         self.tree.tag_configure('limit_unknown', background='#fff1cc', foreground='#634600')
         self.tree.bind('<Button-1>', self.toggle_motor)
+        self.tree.bind('<Double-1>', self.edit_target)
         ttk.Label(frame, text='两端限位分别监视；触发后仅允许反向离开，两端同时触发时禁止运动。').pack(anchor='w', pady=(5,0))
         params = ttk.Frame(frame)
-        params.pack(fill='x', pady=12)
-        ttk.Label(params,text='最高速度 rpm').pack(side='left')
+        params.pack(fill='x', pady=8)
+        params.columnconfigure(2, weight=1)
+        ttk.Label(params,text='最高速度 rpm').grid(row=0,column=0,sticky='w')
         self.rpm_entry = ttk.Entry(params,textvariable=self.rpm,width=12)
-        self.rpm_entry.pack(side='left',padx=8)
-        ttk.Label(params,text='加减速度 rpm/s').pack(side='left')
+        self.rpm_entry.grid(row=0,column=1,padx=8,pady=3)
+        self.rpm_slider = ttk.Scale(params,from_=1,to=3000,
+                                    command=lambda value:self.drag_profile('rpm',value))
+        self.rpm_slider.grid(row=0,column=2,sticky='ew',padx=(0,12))
+        ttk.Label(params,text='加减速度 rpm/s').grid(row=1,column=0,sticky='w')
         self.acceleration_entry = ttk.Entry(params,textvariable=self.acceleration,width=12)
-        self.acceleration_entry.pack(side='left',padx=8)
+        self.acceleration_entry.grid(row=1,column=1,padx=8,pady=3)
+        self.acceleration_slider = ttk.Scale(params,from_=1,to=3000,
+                                             command=lambda value:self.drag_profile('acceleration',value))
+        self.acceleration_slider.grid(row=1,column=2,sticky='ew',padx=(0,12))
         self.enable_button = ttk.Button(params,text='开启连续使能',command=self.enable)
-        self.enable_button.pack(side='right')
-        self.ready_box = ttk.Checkbutton(frame, text='已确认电机固定、运行条件和可随时断电', variable=self.ready)
-        self.ready_box.pack(anchor='w')
+        self.enable_button.grid(row=0,column=3,sticky='ew')
+        self.profile_button = ttk.Button(params,text='应用速度 / 加减速度',command=self.apply_profile)
+        self.profile_button.grid(row=1,column=3,sticky='ew')
+        for entry in (self.rpm_entry,self.acceleration_entry):
+            entry.bind('<Return>',lambda _:self.apply_profile())
+            entry.bind('<FocusOut>',lambda _:self.sync_profile_sliders())
+        self.sync_profile_sliders()
+        ttk.Label(frame,text='获取调试控制权后自动扫描并使能全部电机，保持当前位置；关闭使能 / Esc 可取消。').pack(anchor='w')
+        target_controls = ttk.Frame(frame)
+        target_controls.pack(fill='x',pady=(12,0))
+        ttk.Label(target_controls,text='滑块控制').pack(side='left')
+        self.axis_box = ttk.Combobox(target_controls,textvariable=self.slider_axis,state='disabled',
+                                     values=['全部使能轴（共同目标）'],width=32)
+        self.axis_box.current(0)
+        self.axis_box.pack(side='left',padx=8)
+        self.axis_box.bind('<<ComboboxSelected>>',lambda _:self.sync_slider())
+        self.targets_button = ttk.Button(target_controls,text='发送各轴目标',command=self.send_targets)
+        self.targets_button.pack(side='right')
         ttk.Label(frame,textvariable=self.position,font=('Microsoft YaHei UI',13,'bold')).pack(anchor='w',pady=(16,4))
         self.slider = ttk.Scale(frame,from_=-360,to=360,command=self.drag)
         self.slider.pack(fill='x',pady=8)
@@ -94,15 +136,17 @@ class DebugWindow:
         ttk.Label(ranges,text='显示跨度 ±°').pack(side='left')
         ttk.Entry(ranges,textvariable=self.span,width=10).pack(side='left',padx=8)
         ttk.Button(ranges,text='设置显示范围',command=self.set_range).pack(side='left')
-        ttk.Button(ranges,text='回到使能起点',command=lambda:self.queue_target(0)).pack(side='right')
-        ttk.Label(frame,text='滑块同时控制所有勾选电机；目标为各轴本次使能起点的绝对偏移。显示范围不是累计限位。').pack(anchor='w',pady=10)
+        self.zero_button=ttk.Button(ranges,text='所选轴回到使能起点',command=lambda:self.queue_target(0))
+        self.zero_button.pack(side='right')
+        ttk.Label(frame,text='双击“目标偏移 °”分别输入每轴目标，Enter 发送；滑块可选择单轴或全部使能轴，单轴操作保持其它轴目标。').pack(anchor='w',pady=10)
         ttk.Label(frame,textvariable=self.status,wraplength=980).pack(anchor='w',pady=8)
         self.log = tk.Text(frame,height=4,state='disabled',wrap='word')
         self.log.pack(fill='both',expand=True)
         footer = ttk.Frame(frame)
         footer.pack(fill='x',pady=(10,0))
-        ttk.Button(footer,text='关闭控制界面',command=self.exit_callback).pack(side='right')
-        self.poll_handle = root.after(20,self.poll)
+        self.close_button=ttk.Button(footer,text='关闭控制界面',command=self.exit_callback)
+        self.close_button.pack(side='right')
+        self.poll_handle = root.after(5,self.poll)
 
     def show(self):
         self.root.deiconify()
@@ -112,7 +156,10 @@ class DebugWindow:
         self.root.withdraw()
 
     def stop(self):
+        self.auto_start = None
+        self.start_cancel.set()
         self.latest_target = None
+        self.latest_profile = None
         if self.stop_pending or not self.client.run_id:
             return
         self.stop_pending = True
@@ -124,31 +171,92 @@ class DebugWindow:
         # Stop is independent of ordinary requests and target ACK waits.
         self.stop_executor.submit(worker)
 
-    def task(self, function, label=None):
-        if self.pending:
+    def task(self, function, label=None, *, motion=False):
+        busy='motion_pending' if motion else 'pending'
+        if getattr(self,busy):
             return
-        self.pending = True
+        setattr(self,busy,True)
         def worker():
             try:
                 self.events.put(('result',function(),label))
             except Exception as exc:
                 self.events.put(('error',str(exc),label))
-        self.executor.submit(worker)
+        (self.motion_executor if motion else self.executor).submit(worker)
+
+    def flush_motion(self):
+        if (self.motion_pending or not self.client.run_id or
+                self.state.get('phase')!='enabled' or self.client.run_id!=self.state.get('run_id')):
+            return
+        if self.latest_profile is not None:
+            run_id,rpm,acceleration=self.latest_profile
+            self.latest_profile=None
+            self.motion_run=run_id
+            self.task(lambda:self.client.set_profile(rpm,acceleration,expected_run_id=run_id,
+                                                     retry_timeout=.03),'profile',motion=True)
+        elif self.latest_target is not None:
+            targets,self.latest_target=self.latest_target,None
+            run_id=self.client.run_id
+            self.motion_run=run_id
+            self.task(lambda:self.client.target(targets,expected_run_id=run_id,
+                                                retry_timeout=.03),'target',motion=True)
 
     def claim(self):
-        self.task(lambda:self.client.hello(claim=True),'claim')
+        if self.client.session or self.auto_start:
+            return
+        self.start_cancel = threading.Event()
+        self.start_deadline = time.monotonic()+15
+        self.auto_start = 'claim'
+
+    def advance_start(self):
+        """Advance only after fresh ACK/state feedback; never retry an enable."""
+        if not self.auto_start or self.pending:
+            return
+        if time.monotonic()>self.start_deadline:
+            self.auto_start=None
+            self.start_cancel.set()
+            self.events.put(('notice','自动扫描/使能等待超时，已取消自动流程。','auto_start'))
+            return
+        if self.auto_start=='claim':
+            self.auto_start='claiming'
+            self.task(lambda:self.client.hello(claim=True),'claim')
+        elif self.auto_start=='wait_idle':
+            phase=self.state.get('phase')
+            if phase in ('idle','fault'):
+                self.auto_start='scanning'
+                self.scan(automatic=True)
+            elif phase in ('enabling','enabled','stopping'):
+                self.auto_start=None
+                self.events.put(('notice','后台已有运行或正在停止，自动扫描/使能已取消。','auto_start'))
+        elif self.auto_start=='scanning':
+            phase=self.state.get('phase')
+            if phase=='fault':
+                self.auto_start=None
+            elif phase=='idle':
+                self.selected={d['order'] for d in self.state.get('devices',[])}
+                if not self.selected:
+                    self.auto_start=None
+                    self.events.put(('notice','未扫描到电机，未开启使能。','auto_start'))
+                    return
+                self.auto_start='enabling'
+                self.enable(automatic=True)
 
     def adapters(self):
         self.task(lambda:self.client.request('adapters'),'adapters')
 
-    def scan(self):
+    def scan(self, automatic=False):
+        if self.pending:
+            return
+        if not automatic:
+            self.auto_start=None
         index = self.adapter_box.current()
         adapter = self.adapter_names[index] if 0 <= index < len(self.adapter_names) else self.state.get('adapter')
         self.selected.clear()
-        self.task(lambda:self.client.request('scan',adapter=adapter),'scan')
+        self.finish_target_edit()
+        self.target_values.clear()
+        self.task(lambda:self.client.request('scan',adapter=adapter),'auto_scan' if automatic else 'scan')
 
     def toggle_motor(self,event):
-        if self.state.get('phase') in ('scanning','enabling','enabled','stopping'):
+        if self.auto_start or self.state.get('phase') in ('scanning','enabling','enabled','stopping'):
             return 'break'
         row = self.tree.identify_row(event.y)
         if row:
@@ -157,17 +265,76 @@ class DebugWindow:
             self.render(self.state)
         return 'break'
 
-    def enable(self):
-        if not self.ready.get() or not self.selected:
-            messagebox.showerror('运行条件','请勾选电机并确认运行条件。',parent=self.root)
+    def enable(self, automatic=False):
+        if self.pending:
+            return
+        if not self.selected:
+            messagebox.showerror('电机选择','请先扫描并选择电机。',parent=self.root)
             return
         try:
             rpm, acceleration = float(self.rpm.get()),float(self.acceleration.get())
+            if not all(math.isfinite(v) and v>0 for v in (rpm,acceleration)):
+                raise ValueError()
         except ValueError:
-            messagebox.showerror('参数','请输入数值。',parent=self.root)
+            self.auto_start=None
+            self.events.put(('notice','速度和加减速度必须为大于 0 的有限数值。','enable'))
             return
+        if not automatic:
+            self.auto_start=None
+            self.start_cancel=threading.Event()
+        cancel=self.start_cancel
+        orders=sorted(self.selected)
         self.latest_target = None
-        self.task(lambda:self.client.enable(sorted(self.selected),rpm,acceleration),'enable')
+        self.latest_profile = None
+        self.target_values = {order:0. for order in self.selected}
+        self.enable_pending=True
+        def worker():
+            if cancel.is_set():
+                raise RuntimeError('使能已取消。')
+            reply=self.client.enable(orders,rpm,acceleration)
+            # Stop/close can arrive while the enable ACK is in flight. Cancel
+            # that exact run even if no run_id was available when Stop was pressed.
+            with self.client.lock:
+                cancel_run=cancel.is_set() and self.client.run_id==reply['run_id']
+                if cancel_run:
+                    self.client.run_id=None
+            if cancel_run:
+                self.client.request('disable',run_id=reply['run_id'])
+            return reply
+        self.task(worker,'auto_enable' if automatic else 'enable')
+
+    def sync_profile_sliders(self):
+        self.syncing_profile = True
+        try:
+            for variable, slider in ((self.rpm,self.rpm_slider),
+                                     (self.acceleration,self.acceleration_slider)):
+                try:
+                    value=float(variable.get())
+                    if math.isfinite(value) and value > 0:
+                        slider.set(max(float(slider.cget('from')),min(float(slider.cget('to')),value)))
+                except ValueError:
+                    pass
+        finally:
+            self.syncing_profile = False
+
+    def drag_profile(self, name, value):
+        if self.syncing_profile:
+            return
+        getattr(self,name).set(f'{float(value):.1f}')
+        self.apply_profile()
+
+    def apply_profile(self):
+        try:
+            rpm, acceleration = float(self.rpm.get()),float(self.acceleration.get())
+            if not all(math.isfinite(v) and v > 0 for v in (rpm,acceleration)):
+                raise ValueError()
+        except ValueError:
+            self.status.set('速度和加减速度必须为大于 0 的有限数值。')
+            return
+        self.sync_profile_sliders()
+        if (self.client.session and self.client.run_id and
+                self.state.get('phase')=='enabled' and self.client.run_id==self.state.get('run_id')):
+            self.latest_profile=(self.client.run_id,rpm,acceleration)
 
     def set_range(self):
         import math
@@ -190,12 +357,118 @@ class DebugWindow:
 
     def queue_target(self,value):
         if self.state.get('phase') == 'enabled' and self.client.run_id == self.state.get('run_id'):
-            self.latest_target = [value]*len(self.state['orders'])
-            self.position.set(f'共同目标偏移 {value:.2f}°')
+            index=self.axis_box.current()
+            order=self.slider_orders[index] if 0 <= index < len(self.slider_orders) else None
+            self.queue_axis_target(order,value)
 
-    def render(self,state):
-        self.last_feedback=time.monotonic()
+    def queue_axis_target(self,order,value):
+        orders=self.state.get('orders',[])
+        if (self.state.get('phase')!='enabled' or not self.client.session
+                or not self.client.run_id or self.client.run_id!=self.state.get('run_id')
+                or order is not None and order not in orders):
+            return
+        if not math.isfinite(value):
+            raise ValueError('目标必须为有限角度数值。')
+        values=self.current_targets()
+        for axis in orders if order is None else [order]:
+            values[axis]=value
+        self.target_values.update(values)
+        self.latest_target=[values[axis] for axis in orders]
+        for axis in orders:
+            if self.tree.exists(str(axis)):
+                self.tree.set(str(axis),'target',f'{values[axis]:g}')
+        label='共同目标偏移' if order is None else f'电机 {order} 目标偏移'
+        self.position.set(f'{label} {value:.2f}°')
+
+    def current_targets(self):
+        orders=self.state.get('orders',[])
+        reported=dict(zip(orders,self.state.get('targets_deg',[])))
+        return {order:self.target_values.get(order,reported.get(order,0.)) for order in orders}
+
+    def sync_slider(self):
+        index=self.axis_box.current()
+        order=self.slider_orders[index] if 0 <= index < len(self.slider_orders) else None
+        values=self.current_targets()
+        value=values.get(order,next(iter(values.values()),0.))
+        self.syncing=True
+        try:
+            low,high=float(self.slider.cget('from')),float(self.slider.cget('to'))
+            self.slider.set(max(low,min(high,value)))
+        finally:
+            self.syncing=False
+        label='共同目标偏移' if order is None else f'电机 {order} 目标偏移'
+        self.position.set(f'{label} {value:.2f}°' if order is not None or len(set(values.values()))<=1
+                          else '各轴目标不同；选择单轴调节或拖动统一目标')
+
+    def edit_target(self,event):
+        row=self.tree.identify_row(event.y)
+        column=self.tree.identify_column(event.x)
+        if not row or column!=f"#{list(self.tree['columns']).index('target')+1}":
+            return
+        order=int(row)
+        if (self.state.get('phase')!='enabled' or self.client.run_id!=self.state.get('run_id')
+                or order not in self.state.get('orders',[])):
+            return 'break'
+        self.finish_target_edit()
+        box=self.tree.bbox(row,'target')
+        if not box:
+            return 'break'
+        editor=ttk.Entry(self.tree,justify='center')
+        editor.insert(0,self.tree.set(row,'target'))
+        editor.select_range(0,'end')
+        editor.place(x=box[0],y=box[1],width=box[2],height=box[3])
+        self.target_editor=editor
+        self.target_editor_order=order
+        editor.bind('<Return>',lambda _:self.commit_target_edit())
+        editor.bind('<Escape>',lambda _:self.finish_target_edit())
+        editor.focus_set()
+        return 'break'
+
+    def commit_target_edit(self):
+        if self.target_editor is None:
+            return 'break'
+        try:
+            value=float(self.target_editor.get())
+            if not math.isfinite(value):
+                raise ValueError()
+        except ValueError:
+            messagebox.showerror('各轴目标','请输入有限的角度数值。',parent=self.root)
+            return 'break'
+        order=self.target_editor_order
+        self.finish_target_edit()
+        self.queue_axis_target(order,value)
+        self.sync_slider()
+        return 'break'
+
+    def finish_target_edit(self):
+        if self.target_editor is not None:
+            self.target_editor.destroy()
+            self.target_editor=None
+            self.target_editor_order=None
+
+    def send_targets(self):
+        if self.target_editor is not None:
+            self.commit_target_edit()
+            return
+        values=self.current_targets()
+        if values and self.state.get('phase')=='enabled' and self.client.run_id==self.state.get('run_id'):
+            self.latest_target=[values[axis] for axis in self.state['orders']]
+
+    def render(self,state,feedback_time=None):
+        self.last_render=time.monotonic()
+        self.last_feedback=feedback_time if feedback_time is not None else self.last_render
         self.state=state
+        adapter=state.get('adapter')
+        if adapter and adapter not in self.adapter_names:
+            self.adapter_names=[adapter]
+            label=f'ADLINK {adapter}' if adapter.startswith('PCIe-8332:') else adapter
+            self.adapter_box.configure(values=[label])
+            self.adapter_box.current(0)
+        if state.get('run_id')!=self.target_run:
+            self.target_run=state.get('run_id')
+            self.target_values=dict(zip(state.get('orders',[]),state.get('targets_deg',[])))
+            self.latest_target=None
+            self.finish_target_edit()
         axes={a['order']:a for a in state.get('axes',[])}
         devices=state.get('devices',[])
         limits={a['order']:a for a in state.get('limits',[])}
@@ -225,27 +498,53 @@ class DebugWindow:
             inputs=f"{bit('di1')} / {bit('di2')} · {bit('positive_limit')} / {bit('negative_limit')}"
             values=('☑' if order in self.selected else '☐',order,d['id'],f"{d['name']} / {d['motor_code']}",
                     a.get('position',d['position']),f"{a.get('travel_degrees') or 0:.3f}",
+                    f"{self.target_values.get(order,0.):g}",
                     f"报警 {a['error_code']}" if a.get('error_code') else '使能' if a.get('enabled') else '未使能',
                     limit_text,inputs,retraction_text)
             triggered=sensor.get('triggered') or sensor.get('retraction_triggered')
             known=sensor.get('state')=='clear' and sensor.get('retraction_state','no_sensor') in ('clear','no_sensor')
             tags=('limit_triggered',) if triggered else (() if known else ('limit_unknown',))
             if self.tree.exists(str(order)):
-                self.tree.item(str(order),values=values,tags=tags)
+                row=self.tree.item(str(order))
+                if tuple(str(v) for v in row['values'])!=tuple(str(v) for v in values) or tuple(row['tags'])!=tags:
+                    self.tree.item(str(order),values=values,tags=tags)
             else:
                 self.tree.insert('','end',iid=str(order),values=values,tags=tags)
         owner=bool(self.client.session)
-        idle=state.get('phase') not in ('scanning','enabling','enabled','stopping')
-        self.claim_button.configure(state='disabled' if owner else 'normal')
-        for button in (self.release_button,self.adapters_button,self.scan_button,self.rpm_entry,self.acceleration_entry,self.ready_box):
+        idle=not self.auto_start and not self.enable_pending and state.get('phase') not in ('scanning','enabling','enabled','stopping')
+        self.claim_button.configure(state='disabled' if owner or self.auto_start else 'normal')
+        for button in (self.release_button,self.adapters_button,self.scan_button):
             button.configure(state='normal' if owner and idle else 'disabled')
         self.adapter_box.configure(state='readonly' if owner and idle else 'disabled')
-        self.enable_button.configure(state='normal' if owner and state.get('phase')=='idle' else 'disabled')
-        self.stop_button.configure(state='normal' if self.client.run_id and state.get('phase') in ('enabling','enabled') else 'disabled')
+        self.enable_button.configure(state='normal' if owner and idle and state.get('phase')=='idle' else 'disabled')
+        self.stop_button.configure(state='normal' if self.auto_start or self.enable_pending or
+                                   self.client.run_id and state.get('phase') in ('enabling','enabled') else 'disabled')
         controllable=owner and self.client.run_id==state.get('run_id') and state.get('phase')=='enabled'
+        for widget in (self.rpm_entry,self.acceleration_entry,self.rpm_slider,self.acceleration_slider):
+            widget.configure(state='normal' if owner and (idle or controllable) else 'disabled')
+        self.profile_button.configure(state='normal' if controllable else 'disabled')
+        if controllable and self.profile_run != state.get('run_id'):
+            self.profile_run=state['run_id']
+            profile=state.get('profile') or {}
+            if profile:
+                self.rpm.set(f"{profile['rpm']:g}")
+                self.acceleration.set(f"{profile['acceleration_rpm_s']:g}")
+                self.sync_profile_sliders()
         self.slider.configure(state='normal' if controllable else 'disabled')
+        self.targets_button.configure(state='normal' if controllable else 'disabled')
+        self.zero_button.configure(state='normal' if controllable else 'disabled')
+        active_orders=state.get('orders',[]) if controllable else []
+        if self.slider_orders!=[None]+active_orders:
+            self.slider_orders=[None]+list(active_orders)
+            self.axis_box.configure(values=['全部使能轴（共同目标）']+
+                                     [f'电机 {order}（链路位置 {order}）' for order in active_orders])
+            self.axis_box.current(0)
+            self.sync_slider()
+        self.axis_box.configure(state='readonly' if controllable else 'disabled')
         if not controllable:
             self.latest_target=None
+            self.latest_profile=None
+            self.finish_target_edit()
         inputs = state.get('input_configuration', {})
         input_text = ' · '.join(label for key, label in
             (('limit_inputs_connected', '通用限位未接入（端点传感器按逐轴配置）'), ('emg_input_connected', '急停未接入（调试）'))
@@ -253,6 +552,10 @@ class DebugWindow:
         self.status.set(f"{state.get('phase','?')} · {state.get('message','')} · " +
                         (input_text + ' · ' if input_text else '') +
                         ('调试面板持有控制权' if owner else '只读监视；外部程序可获取控制权'))
+        if controllable:
+            profile=state.get('applied_profile') or {}
+            if profile:
+                self.status.set(self.status.get()+f" · 已应用 {profile['rpm']:g} rpm / {profile['acceleration_rpm_s']:g} rpm/s（拖动即更新，数值 Enter 应用）")
 
     def poll(self):
         try:
@@ -260,9 +563,34 @@ class DebugWindow:
                 kind,result,label=self.events.get_nowait()
                 if label=='stop':
                     self.stop_pending=False
-                else:
+                elif label in ('target','profile'):
+                    self.motion_pending=False
+                elif kind!='notice':
                     self.pending=False
-                if kind=='error':
+                if label in ('enable','auto_enable'):
+                    self.enable_pending=False
+                if label in ('claim','auto_scan','auto_enable'):
+                    if kind=='error':
+                        self.auto_start=None
+                        self.start_cancel.set()
+                    else:
+                        self.render(self.client.state)
+                        if label=='claim' and self.auto_start=='claiming':
+                            self.auto_start='wait_idle'
+                        elif label=='auto_enable':
+                            self.auto_start=None
+                if kind in ('error','notice'):
+                    if label=='target' and self.motion_run==self.client.run_id and self.latest_target is None:
+                        reported=self.client.state
+                        self.target_values=dict(zip(reported.get('orders',[]),reported.get('targets_deg',[])))
+                        self.latest_target=None
+                        self.sync_slider()
+                    if label=='profile' and self.motion_run==self.client.run_id and self.latest_profile is None:
+                        profile=self.client.state.get('profile') or {}
+                        if profile:
+                            self.rpm.set(f"{profile['rpm']:g}")
+                            self.acceleration.set(f"{profile['acceleration_rpm_s']:g}")
+                            self.sync_profile_sliders()
                     self.status.set(result)
                     self.log.configure(state='normal')
                     self.log.insert('end',result+'\n')
@@ -277,31 +605,39 @@ class DebugWindow:
                         current=self.state.get('adapter')
                         self.adapter_box.current(self.adapter_names.index(current) if current in self.adapter_names else 0)
                 elif label=='status':
-                    self.render(result['state'])
+                    self.render(self.client.state,feedback_time=self.client.state_received)
         except queue.Empty:
             pass
+        # Receiver-thread feedback refreshes the display without a blocking RPC.
+        with self.client.lock:
+            state,serial,received=self.client.state,self.client.state_serial,self.client.state_received
+        if received and serial>self.rendered_serial and time.monotonic()-self.last_render>=.025:
+            self.render(state,feedback_time=received)
+            self.rendered_serial=serial
         if self.last_feedback and time.monotonic()-self.last_feedback > 1:
             for row in self.tree.get_children():
                 self.tree.set(row,'limit','反馈失联')
                 self.tree.set(row,'retraction','反馈失联')
                 self.tree.set(row,'inputs','? / ? · ? / ?')
                 self.tree.item(row,tags=('limit_unknown',))
+        self.advance_start()
+        self.flush_motion()
         if not self.pending:
-            if self.latest_target is not None:
-                targets,self.latest_target=self.latest_target,None
-                self.task(lambda:self.client.target(targets),'target')
-            elif time.monotonic()-self.last_query >= .2:
+            if time.monotonic()-self.last_query >= (1. if self.client.session else .2):
                 # hello refreshes an idle lease, but never the motor heartbeat.
                 self.last_query=time.monotonic()
                 self.task(lambda:self.client.hello(claim=bool(self.client.session)),'status')
-        self.poll_handle=self.root.after(20,self.poll)
+        self.poll_handle=self.root.after(5,self.poll)
 
     def close(self):
+        self.stop()
+        self.finish_target_edit()
         self.root.after_cancel(self.poll_handle)
         self.executor.shutdown(wait=True)
+        self.motion_executor.shutdown(wait=True)
         self.stop_executor.shutdown(wait=True)
         self.client.close()
         # Tk variables must be finalized on this UI thread. Destroyed windows
         # may otherwise be collected by a network worker during a later run.
-        for name in ('adapter','rpm','acceleration','center','span','position','status','ready'):
+        for name in ('adapter','rpm','acceleration','center','span','position','slider_axis','status'):
             setattr(self,name,None)

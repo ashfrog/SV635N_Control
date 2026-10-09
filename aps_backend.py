@@ -8,6 +8,7 @@ import ctypes as C
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
+from functools import cached_property
 import json
 import logging
 import math
@@ -63,6 +64,15 @@ SIGNATURES = {
 }
 
 
+class APSError(ControlError):
+    def __init__(self, function, arguments, code, hint=''):
+        self.function, self.code = function, code
+        slave_functions = ('APS_get_field_bus_module_info', 'APS_get_field_bus_sdo',
+                           'APS_get_field_bus_pdo_ODIndex')
+        details = arguments[:3] if function in slave_functions else arguments[:2]
+        super().__init__(f'{function}{details} 返回 APS 错误 {code}{hint}')
+
+
 class APSLibrary:
     def __init__(self, path=''):
         if os.name != 'nt':
@@ -95,7 +105,7 @@ class APSLibrary:
         if result < 0:
             hint = ('；EtherCAT 主站配置错误，请在 MotionCreatorPro2 核对 ESI、重新扫描生成 ENI，'
                     '关闭 MCPro2 后重试（ESI 不是 APS 参数文件）' if result == -4012 else '')
-            raise ControlError(f'{name}{args[:2]} 返回 APS 错误 {result}{hint}')
+            raise APSError(name, args, result, hint)
         return result
 
     def value(self, name, *args, kind=F64):
@@ -116,13 +126,13 @@ class APSDevice(Device):
     retraction_input: str = ''
     retraction_sign: int = 0
 
-    @property
+    @cached_property
     def endpoints(self):
-        return [(prefix, label, input_name, sign) for prefix, label, input_name, sign in
+        return tuple((prefix, label, input_name, sign) for prefix, label, input_name, sign in
                 [('extension', '防推出限位', self.extension_input, self.extension_sign),
-                 ('retraction', '防缩回限位', self.retraction_input, self.retraction_sign)] if input_name]
+                 ('retraction', '防缩回限位', self.retraction_input, self.retraction_sign)] if input_name)
 
-    @property
+    @cached_property
     def limit_mask(self):
         return sum(PEL if sign == 1 else MEL for _, _, _, sign in self.endpoints)
 
@@ -187,6 +197,7 @@ class PCIe8332Controller:
         self.lock_context = None
         self.saved_board = {}
         self.worker_id = None
+        self.pdo_buffers = {}
 
     def adapters(self):
         # Configuration labels only. Enumeration here never calls hardware from UDP thread.
@@ -226,7 +237,13 @@ class PCIe8332Controller:
             if already_op:
                 # Card boot-time auto-connect may already be OP. Adopt it only
                 # after validating topology and verifying EVERY axis servo-off.
-                self._devices()
+                try:
+                    self._devices()
+                except APSError as exc:
+                    if exc.function != 'APS_get_field_bus_module_info' or exc.code != -41:
+                        raise
+                    self._attach_running_bus()
+                    self._devices()
                 self.started = True
             # Save before writing. Never reset alarms automatically or recover/re-enable a failed run.
             for parameter, value in [(0x19, 0), (0x1A, 1), (0x109, 0), (0x28, 0)]:
@@ -250,6 +267,41 @@ class PCIe8332Controller:
             if errors:
                 LOG.error('APS opening cleanup failed: %s', errors)
             raise
+
+    def _attach_running_bus(self):
+        """Attach a fresh APS session to an already-OP single-axis bus.
+
+        OP is a card state; it does not prove this DLL session has populated
+        its slave/axis map. SDK initialization mode takes effect at bus start.
+        Do not rebuild that map while any existing axis is enabled.
+        """
+        info, count = (I32 * 1)(), I32()
+        self.api.call('APS_get_field_bus_last_scan_info', self.board, 0, info, 1, C.byref(count))
+        first, capacity = I32(), I32()
+        self.api.call('APS_get_first_axisId', self.board, C.byref(first), C.byref(capacity))
+        if (count.value != 1 or not 1 <= info[0] <= 128 or first.value < 0
+                or not 1 <= capacity.value <= 65536 or first.value + capacity.value > 65536):
+            raise ControlError('无法核对已运行总线的从站数量和轴范围，未重新接入。')
+        online = 0
+        for axis in range(first.value, first.value + capacity.value):
+            try:
+                io = self.api.call('APS_motion_io_status', axis)
+            except APSError as exc:
+                # Reserved slots report SlaveNotOPState. Only accept these if
+                # the remaining ONLINE axes account for EVERY scanned slave.
+                if exc.function == 'APS_motion_io_status' and exc.code == -1009:
+                    continue
+                raise
+            if io & SVON:
+                raise ControlError(f'Axis {axis} 已使能；先停止并关闭使能，未重新接入总线。')
+            online += bool(io & ONLINE)
+        if online != info[0]:
+            raise ControlError(f'已运行总线有 {info[0]} 个从站，但只能核对 {online} 个在线未使能轴；未重新接入。')
+        LOG.info('Attaching APS session to existing OP bus: %s verified servo-off axes', online)
+        self.started = True
+        self.api.call('APS_start_field_bus', self.board, 0, self.options['start_axis_id'])
+        if self.bus_state() != BUS_OP:
+            raise ControlError('重新接入 APS 会话后总线没有处于 OP。')
 
     def _configure_unwired_emg(self):
         # Explicit commissioning configuration only. Never auto-clear an EMG
@@ -345,7 +397,7 @@ class PCIe8332Controller:
         self._open()
         return self._devices()
 
-    def read_inputs(self, devices):
+    def read_inputs(self, devices, *, bus_ok=None, io_status=None):
         """Read cyclic PDO memory, never a blocking SDO in the motion loop.
 
         SV635N manual pp.521-522: 60FD bit0=N-OT, bit1=P-OT,
@@ -354,7 +406,8 @@ class PCIe8332Controller:
         """
         self._thread()
         result = {}
-        bus_ok = self.initialized and self.bus_state() == BUS_OP
+        if bus_ok is None:
+            bus_ok = self.initialized and self.bus_state() == BUS_OP
         for d in devices:
             sensor = dict(input=d.extension_input or None, state='unconfigured', triggered=None,
                           extension_sign=d.extension_sign,
@@ -365,10 +418,14 @@ class PCIe8332Controller:
             try:
                 if not bus_ok:
                     raise ControlError('总线不在 OP')
-                io = self.api.call('APS_motion_io_status', d.axis_id)
+                io = (io_status[d.axis_id] if io_status is not None else
+                      self.api.call('APS_motion_io_status', d.axis_id))
                 if not io & ONLINE:
                     raise ControlError('从站离线')
-                data, length = (U8 * 4)(), U32()
+                if d.slave_id not in self.pdo_buffers:
+                    self.pdo_buffers[d.slave_id] = (U8 * 4)(), U32()
+                data, length = self.pdo_buffers[d.slave_id]
+                length.value = 0
                 self.api.call('APS_get_field_bus_pdo_ODIndex', self.board, 0, d.slave_id,
                               0x60FD, 0, data, 32, C.byref(length))
                 if length.value != 32:
@@ -414,6 +471,7 @@ class PCIe8332Controller:
             attempt('APS_close')
         self.initialized = self.started = False
         self.saved_board.clear()
+        self.pdo_buffers.clear()
         if self.lock_context is not None:
             self.lock_context.__exit__(None, None, None)
             self.lock_context = None
@@ -435,8 +493,9 @@ class PCIe8332Controller:
         def check_stop():
             if stop.is_set() or commands.closed:
                 raise Stopped('连续控制已停止。')
-        def io_checked(d, enabled=False):
-            io = api.call('APS_motion_io_status', d.axis_id)
+        def io_checked(d, enabled=False, io=None):
+            if io is None:
+                io = api.call('APS_motion_io_status', d.axis_id)
             mask = IO_FAULTS if self.options['limit_inputs_connected'] else IO_FAULTS & ~(PEL | MEL)
             # Configured endpoint limits permit motion away from the active end.
             mask &= ~d.limit_mask
@@ -467,6 +526,14 @@ class PCIe8332Controller:
             preflight = self.read_inputs(selected)
             for d in selected:
                 self.check_limit_feedback(d, preflight[d.order])
+            profile_revision, rpm, acceleration_rpm_s = commands.profile()
+            def native_profile(rpm, acceleration_rpm_s):
+                values = {d.axis_id: (d.units_per_rev * (rpm / 60),
+                                     d.units_per_rev * (acceleration_rpm_s / 60)) for d in selected}
+                if not all(math.isfinite(v) and v > 0 for pair in values.values() for v in pair):
+                    raise ControlError('转换后的 APS 速度/加速度无法表示。')
+                return values
+            profile_values = native_profile(rpm, acceleration_rpm_s)
             for d in selected:
                 check_stop()
                 if not self.options['limit_inputs_connected']:
@@ -480,10 +547,7 @@ class PCIe8332Controller:
                 io_checked(d)
                 if d.error_code or d.statusword & 8:
                     raise ControlError(f'Axis {d.axis_id} 存在驱动报警 {d.error_code:#x}。')
-                velocity = d.units_per_rev * (commands.rpm / 60)
-                acceleration = d.units_per_rev * (commands.acceleration / 60)
-                if not all(math.isfinite(v) and v > 0 for v in (velocity, acceleration)):
-                    raise ControlError('转换后的 APS 速度/加速度无法表示。')
+                velocity, acceleration = profile_values[d.axis_id]
                 saved_deceleration[d.axis_id] = api.value('APS_get_axis_param_f', d.axis_id, SD_DEC)
                 api.call('APS_set_axis_param_f', d.axis_id, SD_DEC, acceleration)
                 before_enable = api.value('APS_get_position_f', d.axis_id)
@@ -510,22 +574,35 @@ class PCIe8332Controller:
                     stale_abnormal_stops.add(d.axis_id)
                     LOG.info('Axis %s has historical ASTP while stopped; awaiting explicit target', d.axis_id)
             check_stop()
+            callback(dict(kind='profile_applied', revision=profile_revision, rpm=rpm,
+                          acceleration_rpm_s=acceleration_rpm_s))
             commands.mark_ready()
             callback(dict(kind='continuous_ready', orders=list(commands.orders)))
             began = time.monotonic()
             last_status = 0
+            selected_ids = {d.axis_id for d in selected}
+            unselected = [d for d in current if d.axis_id not in selected_ids]
+            limits = {}
+            positions = dict(origins)
             while True:
+                cycle_started = time.monotonic()
                 check_stop()
                 if self.bus_state() != BUS_OP:
                     raise ControlError('PCIe-8332 总线退出 OP。')
                 axes = []
-                limits = self.read_inputs(current)
+                status_due = cycle_started - last_status >= .05
+                # One fresh native IO sample serves both limit decoding and faults.
+                # Selected axes' 60FD PDO and motion status are checked every cycle.
+                io_status = {d.axis_id: api.call('APS_motion_io_status', d.axis_id) for d in selected}
+                limits.update(self.read_inputs(selected, bus_ok=True, io_status=io_status))
                 for d in selected:
                     sensor = limits[d.order]
                     self.check_limit_feedback(d, sensor)
-                    io = io_checked(d, True)
+                    io = io_checked(d, True, io=io_status[d.axis_id])
                     status = api.call('APS_motion_status', d.axis_id)
-                    position = api.value('APS_get_position_f', d.axis_id)
+                    if status_due or sensor.get('triggered') or sensor.get('retraction_triggered'):
+                        positions[d.axis_id] = api.value('APS_get_position_f', d.axis_id)
+                    position = positions[d.axis_id]
                     for prefix, label, _, direction in d.endpoints:
                         trigger_key = 'triggered' if prefix == 'extension' else 'retraction_triggered'
                         if (sensor.get(trigger_key) and d.axis_id not in limit_stops and
@@ -537,7 +614,7 @@ class PCIe8332Controller:
                             if active:
                                 active['limit_stopped'] = True
                                 active = None
-                            callback(dict(kind='limit_blocked', limits=limits,
+                            callback(dict(kind='limit_blocked', limits=dict(limits),
                                           text=f'电机 {d.order} {label}触发，已停止向该端运动；可提交反向目标'))
                             blocked_message = True
                             status = api.call('APS_motion_status', d.axis_id)
@@ -555,16 +632,53 @@ class PCIe8332Controller:
                         travel_degrees=(position - origins[d.axis_id]) * 360 / d.units_per_rev * sign,
                         motion_status=status, motion_io_status=io))
                 now = time.monotonic()
-                if now - last_status >= .05:
-                    callback(dict(kind='status', axes=axes, limits=limits))
+                if status_due:
+                    if unselected:
+                        limits.update(self.read_inputs(unselected, bus_ok=True))
+                    callback(dict(kind='status', axes=axes, limits=dict(limits)))
                     trace.append(dict(elapsed_s=now - began, axes=axes))
                     last_status = now
-                if active and all(a['motion_status'] & MDN and
+                if status_due and active and all(a['motion_status'] & MDN and
                                   abs(a['travel_degrees'] - t) <= .2
                                   for a, t in zip(axes, active['targets_deg'])):
                     active['completed'] = True
                     report['completed_commands'] += 1
                     active = None
+                revision, new_rpm, new_acceleration = commands.profile()
+                if revision != profile_revision:
+                    profile_values = native_profile(new_rpm, new_acceleration)
+                    fresh_limits = self.read_inputs(selected)
+                    for d in selected:
+                        self.check_limit_feedback(d, fresh_limits[d.order])
+                    for d in selected:
+                        check_stop()
+                        velocity, acceleration = profile_values[d.axis_id]
+                        api.call('APS_set_axis_param_f', d.axis_id, SD_DEC, acceleration)
+                        # Retarget only an axis still moving to a previously accepted goal.
+                        # A limit stop deletes that goal; a profile change cannot restore it.
+                        target = last_targets.get(d.axis_id)
+                        if target is None or api.call('APS_motion_status', d.axis_id) & MDN:
+                            continue
+                        position = api.value('APS_get_position_f', d.axis_id)
+                        sensor = fresh_limits[d.order]
+                        if any(sensor['triggered' if prefix == 'extension' else 'retraction_triggered']
+                               and (target - position) * direction > 0
+                               for prefix, _, _, direction in d.endpoints):
+                            api.call('APS_stop_move', d.axis_id)
+                            last_targets.pop(d.axis_id, None)
+                            limit_stops.add(d.axis_id)
+                            if active:
+                                active['limit_stopped'] = True
+                                active = None
+                            callback(dict(kind='limit_blocked', limits={**limits, **fresh_limits},
+                                          text=f'电机 {d.order} 端点限位触发，已停止；可提交反向目标'))
+                            blocked_message = True
+                            continue
+                        api.call('APS_ptp_all', d.axis_id, 0, target, 0., velocity, 0.,
+                                 acceleration, acceleration, 0., None)
+                    profile_revision, rpm, acceleration_rpm_s = revision, new_rpm, new_acceleration
+                    callback(dict(kind='profile_applied', revision=revision, rpm=rpm,
+                                  acceleration_rpm_s=acceleration_rpm_s))
                 request = commands.pop()
                 if request:
                     # Convert/validate every selected target before submitting any move.
@@ -590,14 +704,14 @@ class PCIe8332Controller:
                         callback(dict(kind='limit_blocked', limits={**limits, **fresh_limits},
                                       text=f'电机 {blocked} 端点限位触发，目标已拦截；可提交反向目标'))
                         blocked_message = True
-                        stop.wait(self.options['poll_interval_s'])
+                        commands.wait_for_update(max(0., self.options['poll_interval_s'] -
+                                                     (time.monotonic() - cycle_started)))
                         continue  # Discard this request; never resume it when the sensor clears.
                     for d, target in zip(selected, targets):
                         check_stop()
                         if last_targets.get(d.axis_id) == target:
                             continue
-                        velocity = d.units_per_rev * (commands.rpm / 60)
-                        acceleration = d.units_per_rev * (commands.acceleration / 60)
+                        velocity, acceleration = profile_values[d.axis_id]
                         # Option 0 = absolute + aborting, no buffer, no wait-trigger.
                         # NULL in synchronous mode acknowledges submission, never waits for arrival.
                         api.call('APS_ptp_all', d.axis_id, 0, target, 0., velocity, 0.,
@@ -614,7 +728,8 @@ class PCIe8332Controller:
                                   completed=False, superseded=False)
                     history.append(active)
                     callback(dict(kind='command', number=request.number, stage='started', pending=commands.pending()))
-                stop.wait(self.options['poll_interval_s'])
+                commands.wait_for_update(max(0., self.options['poll_interval_s'] -
+                                             (time.monotonic() - cycle_started)))
         except Stopped as exc:
             report.update(stopped=True, error=str(exc))
         except Exception as exc:
@@ -634,7 +749,8 @@ class PCIe8332Controller:
             for d in owned:
                 if not attempt('APS_stop_move', d.axis_id):
                     attempt('APS_emg_stop', d.axis_id)
-            deadline = time.monotonic() + max(1., commands.rpm / commands.acceleration + .5)
+            _, rpm, acceleration_rpm_s = commands.profile()
+            deadline = time.monotonic() + max(1., rpm / acceleration_rpm_s + .5)
             deadline = min(deadline, time.monotonic() + 5)
             pending = list(owned)
             while pending and time.monotonic() < deadline:

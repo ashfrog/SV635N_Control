@@ -4,6 +4,7 @@ Only the worker touches EtherCAT. The GUI publishes immutable targets.
 No network transport or heartbeat is needed for an idle manual session.
 """
 from collections import deque
+import math
 from control_common import MotionCommand, MotionQueue
 import threading
 import time
@@ -17,6 +18,7 @@ class _ManualSession(_Session):
                       acceleration_rpm_s=commands.acceleration) for n in commands.orders]
         super().__init__(controller, moves, devices, stop, callback, False)
         self.commands = commands
+        self.profile_revision = commands.profile()[0]
         self.trace = deque(maxlen=10_000)
         self.history = deque(maxlen=1000)
         self.report.update(continuous=True, control_source='local',
@@ -53,6 +55,28 @@ class _ManualSession(_Session):
         if not low <= a['unwrapped_counts'] <= high:
             raise ControlError('连续控制反馈偏离当前指令路径。')
 
+    def apply_profile(self):
+        revision, rpm, acceleration = self.commands.profile()
+        if revision == self.profile_revision:
+            return False
+        values = []
+        for a in self.selected():
+            raw = (a['counts'] * (rpm / 60), a['counts'] * (acceleration / 60))
+            if not all(math.isfinite(v) for v in raw):
+                raise ControlError('速度/加速度超出驱动器 32 位参数范围。')
+            velocity, accel = (max(1, round(v)) for v in raw)
+            if max(velocity, accel) > 0xFFFFFFFF:
+                raise ControlError('速度/加速度超出驱动器 32 位参数范围。')
+            values.append((a, velocity, accel))
+        for a, velocity, accel in values:
+            for index, value in ((0x6081, velocity), (0x6083, accel), (0x6084, accel), (0x6085, accel)):
+                self.tick()  # Maintain cyclic PDO traffic between mailbox writes.
+                self.write(a, index, 4, value)
+            a['report'].update(profile_velocity_counts_s=velocity, profile_acceleration_counts_s2=accel)
+        self.profile_revision = revision
+        self.emit('profile_applied', revision=revision, rpm=rpm, acceleration_rpm_s=acceleration)
+        return True
+
     def motion(self):
         self.check_stop()
         for a in self.selected():
@@ -72,6 +96,8 @@ class _ManualSession(_Session):
         if any(abs(displacement(a['last'][2], a['origin'])) > a['tolerance'] for a in self.selected()):
             raise ControlError('使能期间出现意外位移。')
         self.check_stop()
+        revision, rpm, acceleration = self.commands.profile()
+        self.emit('profile_applied', revision=revision, rpm=rpm, acceleration_rpm_s=acceleration)
         self.commands.mark_ready()
         self.emit('continuous_ready', orders=list(self.commands.orders))
         self.emit('phase', text='连续使能已就绪；可追加运动指令，空闲保持使能')
@@ -93,7 +119,14 @@ class _ManualSession(_Session):
                     raise ControlError('连续目标确认复位超时。')
             if stage != 'idle':
                 continue
+            profile_changed = self.apply_profile()
             request = self.commands.pop()
+            profile_retarget = (request is None and profile_changed and active is not None and
+                                not all(a['last'][1] & 0x400 and
+                                        abs(a['unwrapped_counts'] - expected[a['device'].order]) <= a['tolerance']
+                                        for a in self.selected()))
+            if profile_retarget:
+                request = active
             if request is None:
                 if active is not None:
                     if all(a['last'][1] & 0x400 and
@@ -109,14 +142,15 @@ class _ManualSession(_Session):
                         raise ControlError('等待超时：到达连续指令目标')
                 continue
             self.check_stop()
-            if active is not None:
+            if active is not None and not profile_retarget:
                 entry['superseded'] = True
             active = request
-            entry = {'number': request.number, 'targets_degrees': list(request.targets),
-                     'completed': False, 'superseded': False}
-            self.history.append(entry)
-            self.report['started_commands'] += 1
-            self.emit('command', number=request.number, stage='started', pending=self.commands.pending())
+            if not profile_retarget:
+                entry = {'number': request.number, 'targets_degrees': list(request.targets),
+                         'completed': False, 'superseded': False}
+                self.history.append(entry)
+                self.report['started_commands'] += 1
+                self.emit('command', number=request.number, stage='started', pending=self.commands.pending())
             deltas = [round(a['counts'] * value * a['direction_factor'] / 360)
                       for a, value in zip(self.selected(), request.targets)]
             duration = 0

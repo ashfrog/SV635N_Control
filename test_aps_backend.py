@@ -1,6 +1,8 @@
 """PCIe-8332 regression using a fake APS API; no real card is initialized."""
 import ctypes as C
 import json
+import logging
+import os
 from pathlib import Path
 import tempfile
 import threading
@@ -8,7 +10,7 @@ import time
 import unittest
 from unittest.mock import patch
 
-from aps_backend import (APSLibrary, PCIe8332Controller, ModuleInfo, AsyncCall,
+from aps_backend import (APSLibrary, APSError, PCIe8332Controller, ModuleInfo, AsyncCall,
                          SIGNATURES, I32, SVON, ONLINE, MDN, ASTP, EMG, PEL, MEL,
                          LIMIT_MAP_EN, validate_options)
 from backend import load_config
@@ -16,6 +18,20 @@ from control_common import ControlError, MotionQueue
 from motor_service import MotorService
 from udp_server import UDPServer
 from UdpControl.client import MotorClient, UDPError
+
+
+def setUpModule():
+    # Fake cards use a separate OS mutex namespace from an already running backend.
+    import aps_backend
+    original = aps_backend.adapter_lock
+    global fake_lock_patch
+    fake_lock_patch = patch('aps_backend.adapter_lock',
+                            side_effect=lambda adapter: original(f'{adapter}:fake:{os.getpid()}'))
+    fake_lock_patch.start()
+
+
+def tearDownModule():
+    fake_lock_patch.stop()
 
 
 def output(pointer, value):
@@ -44,6 +60,7 @@ class FakeAPS:
         self.fail_start = False
         self.gear = 1
         self.module_axes = [10, 12, 14]
+        self.module_ready = True
         self.servo_delay = 0
         self.disable_reads = {}
         self.digital_inputs = {n: 0 for n in self.io}
@@ -66,6 +83,7 @@ class FakeAPS:
             if self.fail_start:
                 raise ControlError('APS_start_field_bus 返回 APS 错误 -4012')
             self.bus = 6
+            self.module_ready = True
         elif name == 'APS_stop_field_bus':
             self.bus = 1
         elif name == 'APS_get_field_bus_master_status':
@@ -90,6 +108,8 @@ class FakeAPS:
         elif name == 'APS_get_field_bus_last_scan_info':
             args[2][0] = 3; output(args[-1], 1)
         elif name == 'APS_get_field_bus_module_info':
+            if not self.module_ready:
+                raise APSError(name, args, -41)
             m = args[-1]._obj
             m.VendorID, m.ProductCode, m.RevisionNo = 0x100000, 0xc010e, 0x10000
             m.TotalAxisNum, m.Axis_ID[0] = 1, self.module_axes[args[2]]
@@ -112,6 +132,8 @@ class FakeAPS:
             output(args[7], self.input_bits)
         elif name == 'APS_motion_io_status':
             axis = args[0]
+            if axis not in self.io:
+                raise APSError(name, args, -1009)
             if self.disable_reads.get(axis, 0):
                 self.disable_reads[axis] -= 1
                 if not self.disable_reads[axis]:
@@ -260,6 +282,70 @@ class ControllerTests(unittest.TestCase):
         devices = self.c.scan()
         self.assertEqual(devices[2].units_per_rev, 3600.)
         self.assertEqual(devices[0].units_per_rev, 2**23)
+
+    def test_new_target_wakes_worker_before_its_safety_poll_timeout(self):
+        self.c.options['poll_interval_s']=.1
+        submitted=[]
+        dispatch=[]
+        producer=None
+        def action(q, stop, event):
+            nonlocal producer
+            if event['kind']=='continuous_ready':
+                def submit():
+                    submitted.append(time.perf_counter())
+                    q.submit([5])
+                producer=threading.Timer(.02,submit)
+                producer.start()
+            elif event['kind']=='command':
+                dispatch.append(time.perf_counter())
+                stop.set()
+        report=self.run_motion(action,(1,))
+        producer.join()
+        self.assertTrue(report['all_disabled'],report)
+        self.assertLess(dispatch[0]-submitted[0],.08)
+
+    def test_input_buffer_cannot_reuse_previous_length_or_data_after_missing_output(self):
+        self.c.options['extension_limits']={'10':'di1'}
+        devices=self.c.scan()
+        self.api.digital_inputs[10]=2
+        self.assertTrue(self.c.read_inputs(devices)[1]['triggered'])
+        call=self.api.call
+        def no_output(name,*args):
+            return 0 if name=='APS_get_field_bus_pdo_ODIndex' else call(name,*args)
+        self.api.call=no_output
+        sensor=self.c.read_inputs(devices)[1]
+        self.assertFalse(sensor['valid'])
+        self.assertIsNone(sensor['triggered'])
+        self.assertIsNone(sensor['digital_inputs'])
+
+    def test_live_profile_retargets_same_goal_without_reenabling(self):
+        def action(q, stop, event):
+            if event['kind'] == 'continuous_ready':
+                q.submit([90, -45])
+            elif event['kind'] == 'command':
+                q.update_profile(30, 75)
+            elif event['kind'] == 'profile_applied' and event['revision'] == 1:
+                stop.set()
+        report = self.run_motion(action)
+        moves = [args for name, args in self.api.calls if name == 'APS_ptp_all']
+        self.assertEqual(len(moves), 4)
+        self.assertEqual([m[2] for m in moves[:2]], [m[2] for m in moves[2:]])
+        self.assertTrue(all(m[4] == 2**23 / 2 and m[6] == 2**23 * 75 / 60 for m in moves[2:]))
+        self.assertEqual(sum(name == 'APS_set_servo_on' and args[1] == 1
+                             for name, args in self.api.calls), 2)
+        self.assertEqual(report['started_commands'], 1)
+        self.assertTrue(report['all_disabled'], report)
+        self.assertEqual(self.api.axis_params, {10: 777., 12: 777., 14: 777.})
+
+    def test_idle_profile_update_does_not_start_motion(self):
+        def action(q, stop, event):
+            if event['kind'] == 'continuous_ready':
+                q.update_profile(90, 150)
+            elif event['kind'] == 'profile_applied' and event['revision'] == 1:
+                stop.set()
+        report = self.run_motion(action)
+        self.assertFalse(any(name == 'APS_ptp_all' for name, _ in self.api.calls))
+        self.assertTrue(report['all_disabled'], report)
 
     def test_sensor_bits_and_unknown_feedback(self):
         self.c.options['extension_limits'] = {'10': 'di1', '14': 'di2'}
@@ -432,6 +518,7 @@ class ControllerTests(unittest.TestCase):
                 blocked = True
                 self.api.digital_inputs[10] = 0
                 self.api.io[10] &= ~PEL
+                q.update_profile(30, 60)  # A profile update must not revive the stopped goal.
             elif e['kind'] == 'status' and blocked:
                 status_after_clear += 1
                 self.assertTrue(e['axes'][0]['enabled'])
@@ -653,6 +740,53 @@ class ControllerTests(unittest.TestCase):
         self.assertLess(names.index('APS_stop_field_bus'), names.index('APS_scan_field_bus'))
         self.assertLess(names.index('APS_scan_field_bus'), names.index('APS_start_field_bus'))
 
+    def test_op_bus_without_session_map_reconnects_three_unwired_emg_axes(self):
+        self.api.bus, self.api.module_ready = 6, False
+        self.c.options['emg_input_connected'] = False
+        for axis in self.api.io:
+            self.api.io[axis] |= EMG
+        devices = self.c.scan()
+        self.assertEqual([d.axis_id for d in devices], [10, 12, 14])
+        self.assertFalse(any(io & (SVON | EMG) for io in self.api.io.values()))
+        self.assertEqual(sum(n == 'APS_start_field_bus' for n, _ in self.api.calls), 1)
+        self.assertFalse(any(n in ('APS_scan_field_bus', 'APS_set_servo_on') for n, _ in self.api.calls))
+        def action(q, stop, event):
+            if event['kind'] == 'continuous_ready':
+                q.submit([5, -3, 2])
+            elif event['kind'] == 'command':
+                stop.set()
+        report = self.run_motion(action, (1, 2, 3))
+        self.assertTrue(report['all_disabled'], report)
+        moves = [args for name, args in self.api.calls if name == 'APS_ptp_all']
+        self.assertEqual([args[0] for args in moves], [10, 12, 14])
+        for args, degrees, sign in zip(moves, [5, -3, 2], [1, 1, -1]):
+            self.assertAlmostEqual(args[2], 1000 + degrees * 2**23 / 360 * sign)
+        self.c.close()
+        self.assertEqual(self.api.board_params[0], 0)
+
+    def test_missing_session_map_does_not_reconnect_enabled_or_unaccounted_axes(self):
+        for condition in ('enabled', 'offline', 'unexpected_error'):
+            with self.subTest(condition=condition):
+                self.api = FakeAPS()
+                self.api.bus, self.api.module_ready = 6, False
+                self.c.api_factory = lambda: self.api
+                if condition == 'enabled':
+                    self.api.io[12] |= SVON
+                elif condition == 'offline':
+                    self.api.io[12] &= ~ONLINE
+                else:
+                    original = self.api.call
+                    def fail(name, *args):
+                        if name == 'APS_motion_io_status':
+                            raise APSError(name, args, -10)
+                        return original(name, *args)
+                    self.api.call = fail
+                with self.assertRaises(ControlError):
+                    self.c.scan()
+                self.assertFalse(any(name in ('APS_start_field_bus', 'APS_stop_field_bus',
+                                              'APS_set_board_param', 'APS_set_servo_on')
+                                     for name, _ in self.api.calls))
+
     def test_already_enabled_axis_prevents_bus_adoption_and_new_enable(self):
         self.api.bus = 6
         self.api.io[12] |= SVON
@@ -662,6 +796,46 @@ class ControllerTests(unittest.TestCase):
 
 
 class APSUDPTests(unittest.TestCase):
+    def test_backend_startup_automatically_scans_default_card_and_can_retry_failure(self):
+        import backend
+        for fail_scan in (False, True):
+            with self.subTest(fail_scan=fail_scan):
+                api = FakeAPS()
+                api.fail_start = fail_scan
+                config = load_config(Path('missing-startup-test-config.json'))
+                config['port'] = 0
+                observed = []
+                def inspect_startup(service, server, config, quit_event, config_path):
+                    with MotorClient(port=server.port) as client:
+                        deadline = time.monotonic() + 3
+                        while time.monotonic() < deadline:
+                            state = client.status()
+                            if state['phase'] in ('idle', 'fault'):
+                                break
+                            time.sleep(.01)
+                        observed.append(state)
+                        if fail_scan:
+                            api.fail_start = False
+                            client.hello()
+                            client.request('scan')
+                            observed.append(client.wait_for(('idle',)))
+                    quit_event.set()
+                with patch('backend.load_config', return_value=config), \
+                     patch('backend.sys.argv', ['backend.py']), \
+                     patch('backend.signal.signal'), \
+                     patch('backend.RotatingFileHandler', return_value=logging.NullHandler()), \
+                     patch('backend.logging.basicConfig'), \
+                     patch('aps_backend.APSLibrary', return_value=api), \
+                     patch('backend.run_tray', side_effect=inspect_startup), \
+                     patch('ctypes.windll.user32.MessageBoxW'):
+                    result = backend.main()
+                self.assertEqual(result, 0)
+                self.assertEqual(observed[0]['phase'], 'fault' if fail_scan else 'idle')
+                self.assertEqual(observed[-1]['adapter'], 'PCIe-8332:0')
+                self.assertEqual([d['axis_id'] for d in observed[-1]['devices']], [10, 12, 14])
+                self.assertFalse(any(name in ('APS_set_servo_on', 'APS_ptp_all') for name, _ in api.calls))
+                self.assertEqual(len(api.threads), 1)
+
     def test_udp_dual_limits_escape_each_end_and_latch_conflict(self):
         api = FakeAPS()
         api.digital_inputs[14] = 2 | (1 << 16)  # Retraction DI1 / P-OT.

@@ -131,13 +131,26 @@ class MotorClient:
             self.sequence += 1
             return self.run_id, self.sequence
 
-    def target(self, targets_deg):
-        run_id, seq = self._next_sequence()
-        return self.request('target', run_id=run_id, seq=seq, targets_deg=list(targets_deg))
+    def target(self, targets_deg, *, expected_run_id=None, retry_timeout=.15):
+        with self.lock:
+            if expected_run_id is not None and expected_run_id != self.run_id:
+                raise UDPError('目标所属运行已结束。')
+            run_id, seq = self._next_sequence()
+        return self.request('target', run_id=run_id, seq=seq, targets_deg=list(targets_deg),
+                            retry_timeout=retry_timeout)
 
     def heartbeat(self):
         run_id, seq = self._next_sequence()
         return self.request('heartbeat', run_id=run_id, seq=seq, retries=1, retry_timeout=.08)
+
+    def set_profile(self, rpm, acceleration_rpm_s, *, expected_run_id=None, retry_timeout=.15):
+        """Update enabled axes together without changing their position targets."""
+        with self.lock:
+            if expected_run_id is not None and expected_run_id != self.run_id:
+                raise UDPError('参数更新所属运行已结束。')
+            run_id, seq = self._next_sequence()
+        return self.request('profile', run_id=run_id, seq=seq, rpm=rpm,
+                            acceleration_rpm_s=acceleration_rpm_s, retry_timeout=retry_timeout)
 
     def disable(self):
         with self.lock:

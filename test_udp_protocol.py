@@ -32,6 +32,15 @@ class ProtocolTests(unittest.TestCase):
         self.service.enable.assert_called_once()
         self.assertFalse(self.server.handle(dict(packet,orders=[1]),self.peer)['ok'])
 
+    def test_profile_authorization_and_duplicate_ack(self):
+        packet=self.packet('profile',run_id='run',seq=7,rpm=30,acceleration_rpm_s=60)
+        self.assertFalse(self.server.handle(packet,('127.0.0.1',12346))['ok'])
+        first=self.server.handle(packet,self.peer)
+        self.assertTrue(first['ok'])
+        self.assertEqual(first,self.server.handle(packet,self.peer))
+        self.service.command.assert_called_once_with('run',7,profile=dict(rpm=30,acceleration_rpm_s=60))
+        self.assertFalse(self.server.handle(dict(packet,rpm=40),self.peer)['ok'])
+
     def test_control_sequence_protects_after_cache_eviction(self):
         packet=self.packet('enable',control_seq=0,orders=[1])
         self.assertTrue(self.server.handle(packet,self.peer)['ok'])

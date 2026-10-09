@@ -139,11 +139,29 @@ class MotionQueue:
         for order in self.orders:
             Move(order, .1, rpm, acceleration_rpm_s=acceleration).validate_profile()
         self.rpm, self.acceleration = rpm, acceleration
+        self.profile_revision = 0
         self.lock = threading.Lock()
+        self.changed = threading.Event()
         self.commands = deque()
         self.planned = (0.0,) * len(self.orders)
         self.number = 0
         self.ready = self.closed = False
+
+    def profile(self):
+        """Read one coherent speed/acceleration pair across worker threads."""
+        with self.lock:
+            return self.profile_revision, self.rpm, self.acceleration
+
+    def update_profile(self, rpm, acceleration):
+        Move(self.orders[0], .1, rpm, acceleration_rpm_s=acceleration).validate_profile()
+        with self.lock:
+            if not self.ready or self.closed:
+                raise ControlError('尚未完成使能，或正在关闭使能。')
+            if (rpm, acceleration) != (self.rpm, self.acceleration):
+                self.rpm, self.acceleration = rpm, acceleration
+                self.profile_revision += 1
+                self.changed.set()
+            return self.profile_revision
 
     def mark_ready(self):
         with self.lock:
@@ -156,6 +174,7 @@ class MotionQueue:
             self.ready = False
             self.closed = True
             self.commands.clear()
+            self.changed.set()
 
     def submit(self, values, relative=False):
         values = tuple(values)
@@ -182,7 +201,13 @@ class MotionQueue:
             self.commands.clear()  # New targets replace pending frames; relative intent still accumulates.
             self.commands.append(command)
             self.planned = targets
+            self.changed.set()
             return command
+
+    def wait_for_update(self, timeout):
+        """Wake immediately for targets/profile/close; the next cycle reads authoritative state."""
+        self.changed.wait(timeout)
+        self.changed.clear()
 
     def pop(self):
         with self.lock:

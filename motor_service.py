@@ -31,7 +31,8 @@ class MotorService:
         self.phase, self.message = 'idle', '后台已启动，电机未使能'
         self.stop_reason = None
         self.run_id, self.sequence, self.last_heartbeat = None, -1, 0
-        self.target_sequence = self.heartbeat_sequence = -1
+        self.target_sequence = self.heartbeat_sequence = self.profile_sequence = -1
+        self.applied_profile = None
         self.axes, self.result, self.orders = [], None, []
         self.limits = {}
         self.input_poll_pending = False
@@ -44,6 +45,7 @@ class MotorService:
     def snapshot(self):
         with self.lock:
             feedback = {a['order']: a for a in self.axes}
+            profile = self.commands.profile() if self.commands else None
             return deepcopy(dict(phase=self.phase, message=self.message, adapter=self.adapter,
                 hardware_backend='aps' if self.hardware else 'injected',
                 input_configuration=({key: self.hardware.options[key] for key in
@@ -51,6 +53,8 @@ class MotorService:
                      'retraction_limits')} if self.hardware else {}),
                 run_id=self.run_id, seq=self.sequence, heartbeat_timeout_s=self.timeout,
                 orders=self.orders, targets_deg=list(self.commands.planned) if self.commands else [],
+                profile=(dict(revision=profile[0], rpm=profile[1], acceleration_rpm_s=profile[2])
+                         if profile else None), applied_profile=self.applied_profile,
                 limits=[dict(order=order, **sensor) for order, sensor in self.limits.items()],
                 devices=[dict(order=d.order, id=d.alias, name=d.name, motor_code=d.motor_code,
                               positive_direction=d.positive_direction, error_code=d.error_code,
@@ -122,7 +126,8 @@ class MotorService:
             self.commands, self.orders = commands, list(orders)
             self.stop_event = threading.Event()
             self.run_id, self.sequence = uuid.uuid4().hex, -1
-            self.target_sequence = self.heartbeat_sequence = -1
+            self.target_sequence = self.heartbeat_sequence = self.profile_sequence = -1
+            self.applied_profile = None
             self.last_heartbeat = time.monotonic()
             self.phase, self.message = 'enabling', '正在使能，保持当前位置'
             self.axes, self.result = [], None
@@ -140,6 +145,8 @@ class MotorService:
                 self.axes = event['axes']
                 if 'limits' in event:
                     self.limits = event['limits']
+            elif event['kind'] == 'profile_applied':
+                self.applied_profile = {k: event[k] for k in ('revision', 'rpm', 'acceleration_rpm_s')}
             elif event['kind'] == 'limit_blocked':
                 self.message = event['text']
                 if 'limits' in event:
@@ -173,7 +180,7 @@ class MotorService:
             commands.close()
         LOG.info('Run finished phase=%s result=%s', self.phase, self.result)
 
-    def command(self, run_id, sequence, targets=None):
+    def command(self, run_id, sequence, targets=None, profile=None):
         with self.lock:
             if not isinstance(run_id, str) or run_id != self.run_id:
                 raise ControlError('run_id 已失效，请显式开启新运行。')
@@ -184,9 +191,14 @@ class MotorService:
             if time.monotonic() - self.last_heartbeat >= self.timeout:
                 self.stop('UDP 心跳超时')
                 raise ControlError('UDP 心跳已超时，不能恢复本次运行。')
-            previous = self.heartbeat_sequence if targets is None else self.target_sequence
+            previous = (self.profile_sequence if profile is not None else
+                        self.heartbeat_sequence if targets is None else self.target_sequence)
             if sequence <= previous:
                 return False
+            if profile is not None:
+                if self.phase != 'enabled':
+                    raise ControlError('使能尚未就绪，不能更新速度和加速度。')
+                self.commands.update_profile(profile['rpm'], profile['acceleration_rpm_s'])
             if targets is not None:
                 if self.phase != 'enabled':
                     raise ControlError('使能尚未就绪，请继续心跳并等待 enabled 状态。')
@@ -215,7 +227,9 @@ class MotorService:
                     # Validate even unchanged targets (bool is not an angle).
                     if len(targets) != len(self.orders) or any(type(x) not in (int, float) or not math.isfinite(x) for x in targets):
                         raise ControlError('目标必须是每个选中电机的有限数值。')
-            if targets is None:
+            if profile is not None:
+                self.profile_sequence = sequence
+            elif targets is None:
                 self.heartbeat_sequence = sequence
             else:
                 self.target_sequence = sequence

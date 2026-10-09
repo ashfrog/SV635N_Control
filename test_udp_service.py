@@ -66,6 +66,9 @@ class ServiceTests(unittest.TestCase):
         self.client.wait_for(('enabled',))
         self.assertNotEqual(old,self.client.run_id)
         with self.assertRaises(UDPError):
+            self.client.target([5],expected_run_id=old)
+        self.assertEqual(self.service.commands.planned,(0,))
+        with self.assertRaises(UDPError):
             self.client.request('disable',run_id=old)
         self.assertEqual(self.service.phase,'enabled')
 
@@ -80,6 +83,50 @@ class ServiceTests(unittest.TestCase):
         self.assertTrue(state['result']['all_disabled'])
         self.assertFalse(any(s.targets for s in self.masters[-1].slaves))
         self.assertEqual(state['stop_reason'],'UDP 心跳超时')
+
+    def test_live_profile_udp_applies_and_restores_without_target(self):
+        self.enable([1,3])
+        master=self.masters[-1]
+        run_id=self.client.run_id
+        self.assertTrue(self.client.set_profile(40,80)['accepted'])
+        self.wait_condition(lambda:(self.service.snapshot()['applied_profile'] or {}).get('rpm')==40)
+        for index in (0,2):
+            slave=master.slaves[index]
+            self.assertEqual(slave.params[0x6081,0],round(2**23*40/60))
+            for obj in (0x6083,0x6084,0x6085):
+                self.assertEqual(slave.params[obj,0],round(2**23*80/60))
+        self.assertFalse(any(s.targets for s in master.slaves))
+        self.assertEqual(self.client.run_id,run_id)
+        with self.assertRaises(UDPError):
+            self.client.set_profile(20,0)
+        self.assertEqual(self.service.commands.profile()[1:],(40,80))
+        self.assertFalse(self.service.command(run_id,0,profile=dict(rpm=10,acceleration_rpm_s=20)))
+        with self.assertRaises(UDPError):
+            self.client.request('profile',run_id='old',seq=100,rpm=20,acceleration_rpm_s=40)
+        self.client.disable()
+        self.client.wait_for(('idle',))
+        for slave in master.slaves:
+            self.assertEqual(slave.params,slave.original)
+
+    def test_profile_sequence_is_independent_and_rejections_do_not_renew(self):
+        self.enable([1])
+        run_id=self.client.run_id
+        self.client.run_id=None
+        self.assertTrue(self.service.command(run_id,100))
+        profile=dict(rpm=30,acceleration_rpm_s=60)
+        self.assertTrue(self.service.command(run_id,2,profile=profile))
+        self.assertTrue(self.service.command(run_id,1,[1]))
+        stamp=self.service.last_heartbeat
+        self.assertFalse(self.service.command(run_id,1,profile=profile))
+        self.assertEqual(stamp,self.service.last_heartbeat)
+        with self.assertRaises(ControlError):
+            self.service.command(run_id,3,profile=dict(rpm=0,acceleration_rpm_s=60))
+        self.assertEqual(stamp,self.service.last_heartbeat)
+        with self.service.lock:
+            self.service.last_heartbeat=time.monotonic()-1
+        with self.assertRaises(ControlError):
+            self.service.command(run_id,4,profile=profile)
+        self.assertEqual(self.service.phase,'stopping')
 
     def test_reorder_heartbeats_do_not_supersede_targets_or_renew_duplicates(self):
         self.enable()

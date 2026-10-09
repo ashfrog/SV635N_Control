@@ -10,6 +10,24 @@ from test_platform_control import FakeMaster
 
 
 class QueueTests(unittest.TestCase):
+    def test_profile_update_is_atomic_and_does_not_change_targets(self):
+        commands = MotionQueue([1, 2])
+        with self.assertRaises(ControlError):
+            commands.update_profile(40, 80)
+        commands.mark_ready()
+        commands.submit([3, 5])
+        commands.update_profile(3000, 6000)
+        self.assertEqual(commands.profile(), (1, 3000, 6000))
+        for invalid in (0, -1, True, float('nan'), float('inf')):
+            with self.assertRaises(ControlError):
+                commands.update_profile(20, invalid)
+            self.assertEqual(commands.profile(), (1, 3000, 6000))
+        commands.update_profile(3000, 6000)
+        self.assertEqual(commands.profile()[0], 1)
+        self.assertEqual(commands.pop().targets, (3, 5))
+        commands.close()
+        with self.assertRaises(ControlError):
+            commands.update_profile(20, 40)
     def test_profile_has_no_software_upper_or_lower_range(self):
         for rpm, acceleration in ((3000, 6000), (.05, .5), (1e308, 1e308), (5e-324, 5e-324)):
             commands = MotionQueue([1], rpm=rpm, acceleration=acceleration)
@@ -160,6 +178,37 @@ class CommunicationTests(unittest.TestCase):
 
 
 class SessionTests(unittest.TestCase):
+    def test_moving_profile_update_preserves_goal_and_restores_parameters(self):
+        master, controller, devices = self.make_controller()
+        commands, stop = MotionQueue([1]), threading.Event()
+        slave = master.slaves[0]
+        original_exchange = slave.exchange
+        def moving_exchange():
+            before = slave.position
+            original_exchange()
+            if slave.targets and slave.words[-1] & 0xF == 15:
+                slave.position = before
+                slave.sw &= ~0x400
+                slave.input = struct.pack('<HHi', 0, slave.sw, slave.position) + bytes(20)
+        slave.exchange = moving_exchange
+        def callback(event):
+            if event['kind'] == 'continuous_ready':
+                commands.submit([20])
+            elif event['kind'] == 'command' and event['stage'] == 'started':
+                commands.update_profile(30,60)
+        original_send = master.send_processdata
+        def send():
+            original_send()
+            if len(slave.targets) == 2:
+                stop.set()
+        master.send_processdata = send
+        report = run_continuous(controller, devices, commands, stop, callback)
+        self.assertTrue(report['stopped'], report)
+        self.assertTrue(report['all_disabled'], report)
+        self.assertEqual(slave.targets[0], slave.targets[1])
+        self.assertEqual(report['started_commands'], 1)
+        self.assertEqual(slave.params, slave.original)
+
     def test_transient_wkc_during_target_ack_continues_and_restores(self):
         master, controller, devices = self.make_controller()
         commands = MotionQueue([1, 2, 3])

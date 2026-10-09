@@ -14,7 +14,7 @@ UTF-8 JSON，一个数据报一个对象，请求最多 8192 字节。默认目�
 {"v":1,"type":"ack","id":"h1","ok":true,"session":"随机字符串","control_seq":-1,"owns_control":true,"server_id":"本次后台实例","state_serial":100,"state":{"phase":"idle","enabled":false,"orders":[],"run_id":null}}
 ```
 
-state 的 phase 是 `idle / scanning / enabling / enabled / stopping / fault`。enabled 是电机反馈，不是用户开启意图。所有状态响应还携带随机 server_id，后台进程每次启动时更换。state_serial 在该 server_id 内严格递增；客户端只采用当前服务器更大序号的 state，避免迟到反馈使状态倒退。重新 hello 时采用返回的 server_id，并重置旧反馈序号。后台主动以约 10 Hz 向控制客户端推送 `{"v":1,"type":"state","server_id":"...","state_serial":101,"state":{...}}`。
+state 的 phase 是 `idle / scanning / enabling / enabled / stopping / fault`。enabled 是电机反馈，不是用户开启意图。所有状态响应还携带随机 server_id，后台进程每次启动时更换。state_serial 在该 server_id 内严格递增；客户端只采用当前服务器更大序号的 state，避免迟到反馈使状态倒退。重新 hello 时采用返回的 server_id，并重置旧反馈序号。后台主动以约 20 Hz 向控制客户端推送 `{"v":1,"type":"state","server_id":"...","state_serial":101,"state":{...}}`。
 
 ## 扫描与使能
 
@@ -36,11 +36,11 @@ adapter 可省略，使用后台当前控制卡配置；PCIe 后台仅接受匹�
 {"v":1,"id":"e1","type":"enable","session":"...","control_seq":2,"orders":[1,2,3],"rpm":80,"acceleration_rpm_s":120}
 ```
 
-orders 须为不同的升序链路位置，不限定三轴。返回 `run_id`，立即开始心跳，直到 phase=enabled 再提交目标。使能不会自动移动，也不会自动执行上一运行目标。rpm 默认 60，acceleration_rpm_s 默认 120；两者为正的有限数值，整段运行固定，修改需要先停止。
+orders 须为不同的升序链路位置，不限定三轴。返回 `run_id`，立即开始心跳，直到 phase=enabled 再提交目标。使能不会自动移动，也不会自动执行上一运行目标。rpm 默认 60，acceleration_rpm_s 默认 120；两者为正的有限数值，使能就绪后可通过 profile 成对更新。
 
 ## 心跳与目标
 
-从 enable 返回的 run_id 开始新运行。心跳和目标各自使用严格递增 seq（0～2^53-1）；可共用全局递增计数，也可分开计数。后台分别记住两种消息的最后 seq。推荐持续 30～60 Hz 目标，目标静止时至少每 100 ms 发送 heartbeat。
+从 enable 返回的 run_id 开始新运行。heartbeat、target、profile 各自使用严格递增 seq（0～2^53-1）；可共用全局递增计数，也可分开计数。后台分别记住三种消息的最后 seq。推荐持续 30～60 Hz 目标，目标静止时至少每 100 ms 发送 heartbeat。
 
 ```json
 {"v":1,"id":"hb1","type":"heartbeat","session":"...","run_id":"...","seq":0}
@@ -54,13 +54,23 @@ targets_deg 的数量与 orders 相同，依次为相对各轴本次使能起点
 
 ack 的 `accepted:true` 表示新序号通过验证；`accepted:false` 表示重复/乱序报文被忽略，不更新目标或心跳。无效请求返回 `ok:false,error:"原因"`，不改变已接受目标，不续期；不能当作已执行。心跳超时默认 0.5 秒，准备阶段也计时，超时后即使后来收到新 seq 也不能恢复该 run。
 
+## 使能期间更新速度和加减速度
+
+```json
+{"v":1,"id":"p1","type":"profile","session":"...","run_id":"...","seq":2,"rpm":40,"acceleration_rpm_s":80}
+```
+
+仅 phase=enabled 接受，两个参数都必须提供，为正的有限数值。更新同时作用于本次所有选中轴；位置目标、使能起点和 run_id 保持不变。正在运动的轴立即按原目标重新提交原生轨迹参数，空闲轴保持当前位置；被限位停止或拦截的旧目标不会因参数更新而恢复。停止减速度同步更新，停止清理时恢复使能前保存的参数。
+
+ACK 表示请求已接受；state.profile 是最近接受的 `{revision,rpm,acceleration_rpm_s}`，state.applied_profile 是硬件线程最近成功应用的同结构值。两者 revision 一致表示该组参数已应用，不能作为运动到位依据。高频更新合并为最新参数；硬件转换或写入失败会停止并进入故障处理。有效的新序号 profile 也续期电机心跳；重复、乱序、无效或旧运行的请求不续期。
+
 ## 停止、释放和重启
 
 ```json
 {"v":1,"id":"d1","type":"disable","session":"...","run_id":"..."}
 ```
 
-disable 不要求 seq，匹配当前 run_id 就优先请求停止。ack 仅表示停止请求已经接受；等待 phase=idle/fault，再核对 state.result.all_disabled 和 cleanup_errors。旧 run_id 的 disable 被拒绝。停止后 target/heartbeat 不可重新使能。
+disable 不要求 seq，匹配当前 run_id 就优先请求停止。ack 仅表示停止请求已经接受；等待 phase=idle/fault，再核对 state.result.all_disabled 和 cleanup_errors。旧 run_id 的 disable 被拒绝。停止后 target/heartbeat/profile 不可重新使能。
 
 ```json
 {"v":1,"id":"r1","type":"release","session":"...","control_seq":3}
