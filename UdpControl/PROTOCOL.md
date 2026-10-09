@@ -79,3 +79,7 @@ disable 不要求 seq，匹配当前 run_id 就优先请求停止。ack 仅表�
 完整 state 还包括 adapter、message、heartbeat_timeout_s、orders、targets_deg、seq、devices、axes、result、stop_reason。PCIe 后台 state.hardware_backend 为 aps，input_configuration 包含 limit_inputs_connected / emg_input_connected（布尔值），devices 新增 axis_id、slave_id、units_per_rev，axes 项含 order、axis_id、slave_id、position（APS 原始位置单位）、enabled、error_code、travel_degrees（累计偏移）。result 含 stopped、error、all_disabled、cleanup_errors、log_path、stop_reason；旧网卡后端另有 PDO 恢复统计（APS 后台不使用它）。feedback 中 seq 是所接收的最大序号，**不表示到位**。具体轴位置以 axes 为准。
 
 不确定 enable 是否执行时先查 state.run_id 和 phase；若尚在准备，保持当前 run 心跳或明确停止。不要用不同 id 重发 enable。停止失败或反馈失联时不能仅凭 ack 宣称电机已关闭。
+
+PCIe 后台新增 `state.limits`（扫描后持续更新，包括未使能/未选中轴）：每项包含 `order`、`input`（推出端 `di1`/`di2` 或 null）、`state`（`triggered`/`clear`/`unconfigured`/`unavailable`）、`valid`、`triggered`（布尔或 null）、`extension_sign`（APS 原生位置方向 ±1；未配置为 0）、`digital_inputs`（60FD 原始值）、`positive_limit`、`negative_limit`、`di1`、`di2`。双端配置另有 `retraction_input`、`retraction_sign`、`retraction_state`、`retraction_triggered`，含义与推出端相同；未配置缩回端时 `retraction_state:"no_sensor"`。`conflict:true` 表示两端同时触发。未知反馈不代表未触发；通信新鲜度仍由接收时间判断。`input_configuration` 包含逐轴 `extension_limits` / `retraction_limits`，配置见根目录后台说明。
+
+推出端限位触发时只允许缩回，缩回端触发时只允许推出。朝已知触发端运动的请求返回 `ok:false`；若请求入队后才触发，由硬件线程丢弃整条多轴目标并更新 `state.message`，先前 ACK 不代表已执行。旧目标不会在传感器解除后自动恢复；触发后需显式提交离开该端的反向目标，并继续心跳。两端同时触发使运行进入 `fault`，需要核对接线/极性并重新扫描。`clear` 不表示到达机械零点，传感器触发也不会自动执行回零。

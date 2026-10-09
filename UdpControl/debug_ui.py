@@ -22,6 +22,7 @@ class DebugWindow:
         self.syncing = False
         self.state, self.selected = {}, set()
         self.last_query = 0
+        self.last_feedback = 0
         self.adapter_names = []
         self.adapter, self.rpm, self.acceleration = tk.StringVar(), tk.StringVar(value='60'), tk.StringVar(value='120')
         self.center, self.span = tk.StringVar(value='0'), tk.StringVar(value='360')
@@ -29,8 +30,8 @@ class DebugWindow:
         self.status = tk.StringVar(value='正在连接后台…')
         self.ready = tk.BooleanVar(value=False)
         root.title('SV635N · UDP 电机控制客户端')
-        root.geometry('1050x720')
-        root.minsize(920, 660)
+        root.geometry('1200x740')
+        root.minsize(1100, 680)
         root.protocol('WM_DELETE_WINDOW', self.exit_callback)
         root.bind('<Escape>', lambda _: self.stop_callback())
         style = ttk.Style(root)
@@ -58,13 +59,19 @@ class DebugWindow:
         self.adapters_button.pack(side='left')
         self.scan_button = ttk.Button(network, text='扫描电机', command=self.scan)
         self.scan_button.pack(side='left', padx=(8, 0))
-        self.tree = ttk.Treeview(frame, columns=('checked','order','id','name','position','travel','state'), show='headings', height=5)
-        for key, label, width in (('checked','选择',55),('order','链路位置',80),('id','ID',60),('name','电机 / 编号',220),
-                                  ('position','位置计数',130),('travel','偏移 °',130),('state','反馈状态',170)):
+        self.tree = ttk.Treeview(frame, columns=('checked','order','id','name','position','travel','state',
+                                                'limit','inputs','retraction'), show='headings', height=5)
+        for key, label, width in (('checked','选择',50),('order','链路位置',70),('id','ID',50),('name','电机 / 编号',190),
+                                  ('position','位置计数',100),('travel','偏移 °',85),('state','反馈状态',80),
+                                  ('limit','推出端限位',145),('inputs','DI1 / DI2 · 正/负限位',170),
+                                  ('retraction','缩回端限位',145)):
             self.tree.heading(key, text=label)
             self.tree.column(key, width=width, anchor='center')
         self.tree.pack(fill='x')
+        self.tree.tag_configure('limit_triggered', background='#ffcccc', foreground='#8b0000')
+        self.tree.tag_configure('limit_unknown', background='#fff1cc', foreground='#634600')
         self.tree.bind('<Button-1>', self.toggle_motor)
+        ttk.Label(frame, text='两端限位分别监视；触发后仅允许反向离开，两端同时触发时禁止运动。').pack(anchor='w', pady=(5,0))
         params = ttk.Frame(frame)
         params.pack(fill='x', pady=12)
         ttk.Label(params,text='最高速度 rpm').pack(side='left')
@@ -187,9 +194,11 @@ class DebugWindow:
             self.position.set(f'共同目标偏移 {value:.2f}°')
 
     def render(self,state):
+        self.last_feedback=time.monotonic()
         self.state=state
         axes={a['order']:a for a in state.get('axes',[])}
         devices=state.get('devices',[])
+        limits={a['order']:a for a in state.get('limits',[])}
         orders={d['order'] for d in devices}
         self.selected.intersection_update(orders)
         for row in self.tree.get_children():
@@ -198,13 +207,33 @@ class DebugWindow:
         for d in devices:
             order=d['order']
             a=axes.get(order,{})
+            sensor=limits.get(order,{})
+            def endpoint_text(state_key, input_key, allowed):
+                text={'triggered':f'● 已触发（只可{allowed}）','clear':'○ 未触发',
+                      'unconfigured':'未配置传感器','unavailable':'反馈失效',
+                      'no_sensor':'无传感器 / 未知'}.get(sensor.get(state_key),'等待反馈')
+                if sensor.get(input_key):
+                    text=sensor[input_key].upper()+' '+text
+                return text
+            limit_text=endpoint_text('state','input','缩回')
+            retraction_text=endpoint_text('retraction_state','retraction_input','推出')
+            if sensor.get('conflict'):
+                limit_text=retraction_text='两端同时触发 / 故障'
+            def bit(key):
+                value=sensor.get(key) if sensor.get('valid') else None
+                return '?' if value is None else '1' if value else '0'
+            inputs=f"{bit('di1')} / {bit('di2')} · {bit('positive_limit')} / {bit('negative_limit')}"
             values=('☑' if order in self.selected else '☐',order,d['id'],f"{d['name']} / {d['motor_code']}",
                     a.get('position',d['position']),f"{a.get('travel_degrees') or 0:.3f}",
-                    f"报警 {a['error_code']}" if a.get('error_code') else '使能' if a.get('enabled') else '未使能')
+                    f"报警 {a['error_code']}" if a.get('error_code') else '使能' if a.get('enabled') else '未使能',
+                    limit_text,inputs,retraction_text)
+            triggered=sensor.get('triggered') or sensor.get('retraction_triggered')
+            known=sensor.get('state')=='clear' and sensor.get('retraction_state','no_sensor') in ('clear','no_sensor')
+            tags=('limit_triggered',) if triggered else (() if known else ('limit_unknown',))
             if self.tree.exists(str(order)):
-                self.tree.item(str(order),values=values)
+                self.tree.item(str(order),values=values,tags=tags)
             else:
-                self.tree.insert('','end',iid=str(order),values=values)
+                self.tree.insert('','end',iid=str(order),values=values,tags=tags)
         owner=bool(self.client.session)
         idle=state.get('phase') not in ('scanning','enabling','enabled','stopping')
         self.claim_button.configure(state='disabled' if owner else 'normal')
@@ -219,7 +248,7 @@ class DebugWindow:
             self.latest_target=None
         inputs = state.get('input_configuration', {})
         input_text = ' · '.join(label for key, label in
-            (('limit_inputs_connected', '限位未接入'), ('emg_input_connected', '急停未接入（调试）'))
+            (('limit_inputs_connected', '通用限位未接入（端点传感器按逐轴配置）'), ('emg_input_connected', '急停未接入（调试）'))
             if inputs.get(key) is False)
         self.status.set(f"{state.get('phase','?')} · {state.get('message','')} · " +
                         (input_text + ' · ' if input_text else '') +
@@ -251,6 +280,12 @@ class DebugWindow:
                     self.render(result['state'])
         except queue.Empty:
             pass
+        if self.last_feedback and time.monotonic()-self.last_feedback > 1:
+            for row in self.tree.get_children():
+                self.tree.set(row,'limit','反馈失联')
+                self.tree.set(row,'retraction','反馈失联')
+                self.tree.set(row,'inputs','? / ? · ? / ?')
+                self.tree.item(row,tags=('limit_unknown',))
         if not self.pending:
             if self.latest_target is not None:
                 targets,self.latest_target=self.latest_target,None

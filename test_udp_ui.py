@@ -99,6 +99,65 @@ class UITests(unittest.TestCase):
         finally:
             timer.cancel()
 
+    def test_sensor_display_distinguishes_trigger_unknown_and_no_retraction_sensor(self):
+        root=tk.Tk()
+        ui=DebugWindow(root,'127.0.0.1',self.server.port)
+        state=dict(phase='idle',devices=[dict(order=1,id=0,name='SV635N',motor_code=14101,position=0)],
+                   limits=[dict(order=1,state='triggered',triggered=True,valid=True,
+                                di1=True,di2=False,positive_limit=True,negative_limit=False,
+                                retraction_state='no_sensor')])
+        try:
+            ui.render(state)
+            self.assertIn('已触发',ui.tree.set('1','limit'))
+            self.assertEqual(ui.tree.item('1','tags'),('limit_triggered',))
+            self.assertEqual(ui.tree.set('1','retraction'),'无传感器 / 未知')
+            self.assertEqual(ui.tree.set('1','inputs'),'1 / 0 · 1 / 0')
+            state['limits'][0].update(state='unavailable',triggered=None,valid=False)
+            ui.render(state)
+            self.assertEqual(ui.tree.set('1','limit'),'反馈失效')
+            self.assertEqual(ui.tree.set('1','inputs'),'? / ? · ? / ?')
+            ui.last_feedback=time.monotonic()-2
+            root.after_cancel(ui.poll_handle)
+            ui.poll()
+            self.assertEqual(ui.tree.set('1','limit'),'反馈失联')
+        finally:
+            ui.close()
+            root.destroy()
+            del ui,root
+            gc.collect()
+
+    def test_dual_endpoint_display_and_stale_feedback(self):
+        root=tk.Tk()
+        ui=DebugWindow(root,'127.0.0.1',self.server.port)
+        sensor=dict(order=1,input='di2',state='clear',triggered=False,valid=True,
+                    retraction_input='di1',retraction_state='triggered',retraction_triggered=True,
+                    di1=True,di2=False,positive_limit=True,negative_limit=False)
+        state=dict(phase='idle',devices=[dict(order=1,id=0,name='SV635N',motor_code=14101,position=0)],
+                   limits=[sensor])
+        try:
+            ui.render(state)
+            self.assertIn('DI2 ○ 未触发',ui.tree.set('1','limit'))
+            self.assertIn('DI1 ● 已触发（只可推出）',ui.tree.set('1','retraction'))
+            self.assertEqual(ui.tree.item('1','tags'),('limit_triggered',))
+            sensor.update(triggered=True,state='triggered',conflict=True)
+            ui.render(state)
+            self.assertEqual(ui.tree.set('1','limit'),'两端同时触发 / 故障')
+            self.assertEqual(ui.tree.set('1','retraction'),'两端同时触发 / 故障')
+            sensor.update(triggered=False,state='unavailable',valid=False,retraction_triggered=None,
+                          retraction_state='unavailable',conflict=False)
+            ui.render(state)
+            self.assertIn('反馈失效',ui.tree.set('1','retraction'))
+            ui.last_feedback=time.monotonic()-2
+            root.after_cancel(ui.poll_handle)
+            ui.poll()
+            self.assertEqual(ui.tree.set('1','limit'),'反馈失联')
+            self.assertEqual(ui.tree.set('1','retraction'),'反馈失联')
+        finally:
+            ui.close()
+            root.destroy()
+            del ui,root
+            gc.collect()
+
 
 if __name__=='__main__':
     unittest.main()

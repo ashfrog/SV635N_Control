@@ -33,6 +33,8 @@ class MotorService:
         self.run_id, self.sequence, self.last_heartbeat = None, -1, 0
         self.target_sequence = self.heartbeat_sequence = -1
         self.axes, self.result, self.orders = [], None, []
+        self.limits = {}
+        self.input_poll_pending = False
         self.monitor = threading.Thread(target=self._watchdog, name='Motor-Watchdog', daemon=True)
         self.monitor.start()
 
@@ -45,9 +47,11 @@ class MotorService:
             return deepcopy(dict(phase=self.phase, message=self.message, adapter=self.adapter,
                 hardware_backend='aps' if self.hardware else 'injected',
                 input_configuration=({key: self.hardware.options[key] for key in
-                    ('limit_inputs_connected', 'emg_input_connected')} if self.hardware else {}),
+                    ('limit_inputs_connected', 'emg_input_connected', 'extension_limits',
+                     'retraction_limits')} if self.hardware else {}),
                 run_id=self.run_id, seq=self.sequence, heartbeat_timeout_s=self.timeout,
                 orders=self.orders, targets_deg=list(self.commands.planned) if self.commands else [],
+                limits=[dict(order=order, **sensor) for order, sensor in self.limits.items()],
                 devices=[dict(order=d.order, id=d.alias, name=d.name, motor_code=d.motor_code,
                               positive_direction=d.positive_direction, error_code=d.error_code,
                               position=d.position, **({k: getattr(d, k) for k in
@@ -80,13 +84,16 @@ class MotorService:
                 self.adapter = adapter
             self.phase, self.message = 'scanning', '正在扫描电机，不使能'
             self.devices, self.axes, self.orders, self.result = [], [], [], None
+            self.limits = {}
             self.executor.submit(self._scan)
 
     def _scan(self):
         try:
             devices = self._controller().scan()
+            limits = self.hardware.read_inputs(devices) if self.hardware else {}
             with self.lock:
                 self.devices = devices
+                self.limits = limits
                 self.phase, self.message = 'idle', f'扫描到 {len(devices)} 台电机'
             LOG.info('Scan completed: %s devices', len(devices))
         except Exception as exc:
@@ -131,6 +138,12 @@ class MotorService:
                     self.phase, self.message = 'enabled', '连续使能就绪'
             elif event['kind'] == 'status':
                 self.axes = event['axes']
+                if 'limits' in event:
+                    self.limits = event['limits']
+            elif event['kind'] == 'limit_blocked':
+                self.message = event['text']
+                if 'limits' in event:
+                    self.limits = event['limits']
             elif event['kind'] == 'phase' and self.phase != 'stopping':
                 self.message = event['text']
 
@@ -179,6 +192,23 @@ class MotorService:
                     raise ControlError('使能尚未就绪，请继续心跳并等待 enabled 状态。')
                 if not isinstance(targets, list):
                     raise ControlError('targets_deg 必须是数组。')
+                feedback = {a['order']: a for a in self.axes}
+                for order, target in zip(self.orders, targets):
+                    sensor = self.limits.get(order, {})
+                    if sensor.get('input') or sensor.get('retraction_input'):
+                        if not sensor.get('valid'):
+                            raise ControlError(f'电机 {order} 端点限位反馈失效。')
+                        if sensor.get('conflict'):
+                            raise ControlError(f'电机 {order} 两端限位同时触发，禁止运动。')
+                        axis = feedback.get(order)
+                        device = next(d for d in self.devices if d.order == order)
+                        for prefix, label, _, direction in device.endpoints:
+                            sign = direction * (1 if device.positive_direction else -1)
+                            if (sensor.get('triggered' if prefix == 'extension' else 'retraction_triggered')
+                                    and axis and type(target) in (int, float)
+                                    and (target - axis['travel_degrees']) * sign > 0):
+                                allowed = '缩回' if prefix == 'extension' else '推出'
+                                raise ControlError(f'电机 {order} {label}触发，只允许{allowed}方向的目标。')
                 if tuple(targets) != self.commands.planned:
                     self.commands.submit(targets)
                 else:
@@ -203,10 +233,36 @@ class MotorService:
                 LOG.info('Stop requested: %s', reason)
 
     def _watchdog(self):
+        last_inputs = 0
         while not self.shutdown.wait(.02):
             with self.lock:
                 if self.phase in ('enabling', 'enabled') and time.monotonic() - self.last_heartbeat >= self.timeout:
                     self.stop('UDP 心跳超时')
+                if (self.hardware and self.devices and self.phase not in BUSY
+                        and not self.input_poll_pending and time.monotonic() - last_inputs >= .1):
+                    self.input_poll_pending = True
+                    last_inputs = time.monotonic()
+                    self.executor.submit(self._poll_inputs)
+
+    def _poll_inputs(self):
+        try:
+            with self.lock:
+                if self.shutdown.is_set() or self.phase in BUSY:
+                    return
+                devices = list(self.devices)
+            limits = self.hardware.read_inputs(devices)
+            with self.lock:
+                self.limits = limits
+        except Exception as exc:
+            with self.lock:
+                self.limits = {d.order: dict(input=d.extension_input or None, valid=False,
+                    triggered=None, state='unavailable', error=str(exc),
+                    retraction_input=d.retraction_input or None, retraction_triggered=None,
+                    retraction_state='unavailable' if d.retraction_input else 'no_sensor')
+                    for d in self.devices}
+        finally:
+            with self.lock:
+                self.input_poll_pending = False
 
     def close(self):
         self.shutdown.set()

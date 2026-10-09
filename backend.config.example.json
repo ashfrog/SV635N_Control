@@ -11,8 +11,10 @@
     "dll_path": "",
     "regenerate_eni": false,
     "axis_units_per_rev": {},
+    "extension_limits": {"0": "di2", "1": "di2", "2": "di2"},
+    "retraction_limits": {"0": "di1", "1": "di1", "2": "di1"},
     "poll_interval_s": 0.005,
-    "limit_inputs_connected": false,
+    "limit_inputs_connected": true,
     "emg_input_connected": false
   }
 }

@@ -53,6 +53,7 @@ SIGNATURES = {
     'APS_get_field_bus_last_scan_info': [I32, I32, PI32, I32, PI32],
     'APS_get_field_bus_module_info': [I32, I32, I32, C.POINTER(ModuleInfo)],
     'APS_get_field_bus_sdo': [I32, I32, I32, U16, U16, C.POINTER(U8), U32, PU32, U32, U32],
+    'APS_get_field_bus_pdo_ODIndex': [I32, I32, I32, U16, U16, C.POINTER(U8), U32, PU32],
     'APS_get_field_bus_alarm': [I32, PU32], 'APS_set_servo_on': [I32, I32],
     'APS_motion_status': [I32], 'APS_motion_io_status': [I32],
     'APS_get_position_f': [I32, PF64], 'APS_get_command_f': [I32, PF64],
@@ -110,17 +111,33 @@ class APSDevice(Device):
     axis_id: int = 0
     slave_id: int = 0
     units_per_rev: float = 0
+    extension_input: str = ''
+    extension_sign: int = 0  # APS native position direction; not UI-normalized direction.
+    retraction_input: str = ''
+    retraction_sign: int = 0
+
+    @property
+    def endpoints(self):
+        return [(prefix, label, input_name, sign) for prefix, label, input_name, sign in
+                [('extension', '防推出限位', self.extension_input, self.extension_sign),
+                 ('retraction', '防缩回限位', self.retraction_input, self.retraction_sign)] if input_name]
+
+    @property
+    def limit_mask(self):
+        return sum(PEL if sign == 1 else MEL for _, _, _, sign in self.endpoints)
 
     @property
     def identity(self):
         return super().identity + (self.axis_id, self.slave_id, self.units_per_rev,
-                                   self.gear_numerator, self.gear_denominator)
+                                   self.gear_numerator, self.gear_denominator, self.extension_input,
+                                   self.extension_sign, self.retraction_input, self.retraction_sign)
 
 
 def validate_options(options):
     defaults = dict(board_id=0, bus_no=0, start_axis_id=0, dll_path='', regenerate_eni=False,
                     axis_units_per_rev={}, poll_interval_s=.005,
-                    limit_inputs_connected=True, emg_input_connected=True)
+                    limit_inputs_connected=True, emg_input_connected=True,
+                    extension_limits={}, retraction_limits={})
     if not isinstance(options, dict) or set(options) - set(defaults):
         raise ValueError('aps 配置包含未知字段，或不是 JSON 对象。')
     defaults.update(options)
@@ -142,6 +159,17 @@ def validate_options(options):
         if (not isinstance(axis, str) or not axis.isdecimal() or str(int(axis)) != axis or int(axis) > 65535
                 or type(value) not in (int, float) or not math.isfinite(value) or value <= 0):
             raise ValueError('aps.axis_units_per_rev 的轴号或每转位置单位无效。')
+    for key in ('extension_limits', 'retraction_limits'):
+        limits = defaults[key]
+        if not isinstance(limits, dict):
+            raise ValueError(f'aps.{key} 必须是以 APS 轴号为键的对象。')
+        for axis, value in limits.items():
+            if (not isinstance(axis, str) or not axis.isdecimal() or str(int(axis)) != axis
+                    or int(axis) > 65535 or value not in ('di1', 'di2')):
+                raise ValueError(f'aps.{key} 格式应为 {{"0":"di1"}} 或 {{"0":"di2"}}。')
+    for axis in defaults['extension_limits'].keys() & defaults['retraction_limits'].keys():
+        if defaults['extension_limits'][axis] == defaults['retraction_limits'][axis]:
+            raise ValueError(f'Axis {axis} 推出和缩回限位不能使用同一路 DI。')
     return defaults
 
 
@@ -283,20 +311,92 @@ class PCIe8332Controller:
             if motor != 14101 or direction not in (0, 1) or not numerator or not denominator:
                 raise ControlError(f'Axis {axis} 的电机型号、方向或电子齿轮参数未通过核对。')
             units = self.options['axis_units_per_rev'].get(str(axis), (2**23) * denominator / numerator)
+            endpoints = {}
+            for prefix in ('extension', 'retraction'):
+                input_name = self.options[prefix + '_limits'].get(str(axis), '')
+                sign = 0
+                if input_name:
+                    function = self._sdo(slave, 0x2003, 3 if input_name == 'di1' else 5)
+                    if function not in (14, 15):
+                        raise ControlError(f'Axis {axis} {input_name.upper()} 必须配置为 P-OT(14) 或 N-OT(15)。')
+                    sign = 1 if function == 14 else -1
+                endpoints[prefix + '_input'] = input_name
+                endpoints[prefix + '_sign'] = sign
+            if endpoints['extension_sign'] and endpoints['retraction_sign']:
+                if (endpoints['extension_input'] == endpoints['retraction_input'] or
+                        endpoints['extension_sign'] == endpoints['retraction_sign']):
+                    raise ControlError(f'Axis {axis} 两端限位必须使用不同 DI，且分别配置为 P-OT 和 N-OT。')
             devices.append(APSDevice(order=slave + 1, alias=self._sdo(slave, 0x200E, 0x16),
                 name=f'SV635N · APS Axis {axis} / Slave {slave}', vendor=module.VendorID,
                 product=module.ProductCode, revision=module.RevisionNo, state=BUS_OP,
                 statusword=self._sdo(slave, 0x6041), error_code=self._sdo(slave, 0x603F),
                 position=self.api.value('APS_get_position_f', axis), gear_numerator=numerator,
                 gear_denominator=denominator, motor_code=motor, positive_direction=direction,
-                axis_id=axis, slave_id=slave, units_per_rev=units))
+                axis_id=axis, slave_id=slave, units_per_rev=units,
+                **endpoints))
         if not devices:
             raise ControlError('总线上没有 SV635N 电机。')
+        missing = (set(self.options['extension_limits']) | set(self.options['retraction_limits'])) - {str(d.axis_id) for d in devices}
+        if missing:
+            raise ControlError(f'端点限位配置中的 APS 轴号不存在：{sorted(missing)}')
         return devices
 
     def scan(self):
         self._open()
         return self._devices()
+
+    def read_inputs(self, devices):
+        """Read cyclic PDO memory, never a blocking SDO in the motion loop.
+
+        SV635N manual pp.521-522: 60FD bit0=N-OT, bit1=P-OT,
+        bit16..20=DI1..5. APS PDO lengths are in BITS (SDK p.721).
+        A missing PDO is unknown feedback, never an inactive limit.
+        """
+        self._thread()
+        result = {}
+        bus_ok = self.initialized and self.bus_state() == BUS_OP
+        for d in devices:
+            sensor = dict(input=d.extension_input or None, state='unconfigured', triggered=None,
+                          extension_sign=d.extension_sign,
+                          retraction_input=d.retraction_input or None, retraction_sign=d.retraction_sign,
+                          retraction_state='unconfigured' if d.retraction_input else 'no_sensor',
+                          retraction_triggered=None, conflict=False, valid=False, digital_inputs=None,
+                          positive_limit=None, negative_limit=None, di1=None, di2=None)
+            try:
+                if not bus_ok:
+                    raise ControlError('总线不在 OP')
+                io = self.api.call('APS_motion_io_status', d.axis_id)
+                if not io & ONLINE:
+                    raise ControlError('从站离线')
+                data, length = (U8 * 4)(), U32()
+                self.api.call('APS_get_field_bus_pdo_ODIndex', self.board, 0, d.slave_id,
+                              0x60FD, 0, data, 32, C.byref(length))
+                if length.value != 32:
+                    raise ControlError(f'60FD PDO 长度为 {length.value} bit，需要 32 bit')
+                raw = int.from_bytes(bytes(data), 'little')
+                sensor.update(valid=True, digital_inputs=raw, positive_limit=bool(raw & 2),
+                              negative_limit=bool(raw & 1), di1=bool(raw & (1 << 16)),
+                              di2=bool(raw & (1 << 17)))
+                for prefix, _, _, sign in d.endpoints:
+                    bit, native = (2, PEL) if sign == 1 else (1, MEL)
+                    triggered = bool(raw & bit or io & native)
+                    stem = '' if prefix == 'extension' else 'retraction_'
+                    sensor[stem + 'triggered'] = triggered
+                    sensor[stem + 'state'] = 'triggered' if triggered else 'clear'
+                sensor['conflict'] = bool(sensor['triggered'] and sensor['retraction_triggered'])
+            except Exception as exc:
+                sensor.update(state='unavailable', error=str(exc))
+                if d.retraction_input:
+                    sensor['retraction_state'] = 'unavailable'
+            result[d.order] = sensor
+        return result
+
+    @staticmethod
+    def check_limit_feedback(d, sensor):
+        if d.endpoints and not sensor['valid']:
+            raise ControlError(f'Axis {d.axis_id} 端点限位反馈失效：{sensor.get("error")}')
+        if sensor.get('conflict'):
+            raise ControlError(f'Axis {d.axis_id} 推出与缩回限位同时触发；请核对接线、极性和 DI 功能。')
 
     def close(self):
         self._thread()
@@ -327,6 +427,8 @@ class PCIe8332Controller:
         saved_limit_mapping = {}
         selected, last_targets = [], {}
         stale_abnormal_stops = set()
+        limit_stops = set()
+        blocked_message = False
         history, trace = deque(maxlen=1000), deque(maxlen=1000)
         active = None
         api = self.api
@@ -336,6 +438,8 @@ class PCIe8332Controller:
         def io_checked(d, enabled=False):
             io = api.call('APS_motion_io_status', d.axis_id)
             mask = IO_FAULTS if self.options['limit_inputs_connected'] else IO_FAULTS & ~(PEL | MEL)
+            # Configured endpoint limits permit motion away from the active end.
+            mask &= ~d.limit_mask
             reasons = []
             if not io & ONLINE:
                 reasons.append('从站离线')
@@ -360,13 +464,19 @@ class PCIe8332Controller:
             if [d.identity for d in devices] != [d.identity for d in current]:
                 raise ControlError('扫描后设备/轴映射/电子齿轮发生变化，请重新扫描。')
             selected = [refreshed[n] for n in commands.orders]
+            preflight = self.read_inputs(selected)
+            for d in selected:
+                self.check_limit_feedback(d, preflight[d.order])
             for d in selected:
                 check_stop()
                 if not self.options['limit_inputs_connected']:
                     original = api.value('APS_get_axis_param', d.axis_id, LIMIT_MAP_EN, kind=I32)
                     saved_limit_mapping[d.axis_id] = original
-                    # Disable only PEL/MEL mapping; retain ORG and all unrelated bits.
-                    api.call('APS_set_axis_param', d.axis_id, LIMIT_MAP_EN, original & ~(PEL | MEL))
+                    # Retain both configured ends, ORG and unrelated mapping bits.
+                    unwired = (PEL | MEL) & ~d.limit_mask
+                    api.call('APS_set_axis_param', d.axis_id, LIMIT_MAP_EN, original & ~unwired)
+                if d.endpoints:
+                    self.check_limit_feedback(d, self.read_inputs([d])[d.order])
                 io_checked(d)
                 if d.error_code or d.statusword & 8:
                     raise ControlError(f'Axis {d.axis_id} 存在驱动报警 {d.error_code:#x}。')
@@ -409,14 +519,36 @@ class PCIe8332Controller:
                 if self.bus_state() != BUS_OP:
                     raise ControlError('PCIe-8332 总线退出 OP。')
                 axes = []
+                limits = self.read_inputs(current)
                 for d in selected:
+                    sensor = limits[d.order]
+                    self.check_limit_feedback(d, sensor)
                     io = io_checked(d, True)
                     status = api.call('APS_motion_status', d.axis_id)
+                    position = api.value('APS_get_position_f', d.axis_id)
+                    for prefix, label, _, direction in d.endpoints:
+                        trigger_key = 'triggered' if prefix == 'extension' else 'retraction_triggered'
+                        if (sensor.get(trigger_key) and d.axis_id not in limit_stops and
+                                ((last_targets.get(d.axis_id, position) - position) * direction > 0
+                                 or api.value('APS_get_feedback_velocity_f', d.axis_id) * direction > 0)):
+                            api.call('APS_stop_move', d.axis_id)
+                            limit_stops.add(d.axis_id)
+                            last_targets.pop(d.axis_id, None)
+                            if active:
+                                active['limit_stopped'] = True
+                                active = None
+                            callback(dict(kind='limit_blocked', limits=limits,
+                                          text=f'电机 {d.order} {label}触发，已停止向该端运动；可提交反向目标'))
+                            blocked_message = True
+                            status = api.call('APS_motion_status', d.axis_id)
                     if status & ASTP and (d.axis_id not in stale_abnormal_stops or
                                           d.axis_id in last_targets or not status & MDN):
                         code = api.value('APS_get_stop_code', d.axis_id, kind=I32)
-                        raise ControlError(f'Axis {d.axis_id} 异常停止，stop_code={code}。')
-                    position = api.value('APS_get_position_f', d.axis_id)
+                        directional_stop = (any(code == (4 if direction == 1 else 5)
+                                                for _, _, _, direction in d.endpoints) or
+                                            code == 9 and d.axis_id in limit_stops)
+                        if not directional_stop:
+                            raise ControlError(f'Axis {d.axis_id} 异常停止，stop_code={code}。')
                     sign = 1 if d.positive_direction else -1
                     axes.append(dict(order=d.order, axis_id=d.axis_id, slave_id=d.slave_id,
                         position=position, enabled=bool(io & SVON), error_code=0,
@@ -424,7 +556,7 @@ class PCIe8332Controller:
                         motion_status=status, motion_io_status=io))
                 now = time.monotonic()
                 if now - last_status >= .05:
-                    callback(dict(kind='status', axes=axes))
+                    callback(dict(kind='status', axes=axes, limits=limits))
                     trace.append(dict(elapsed_s=now - began, axes=axes))
                     last_status = now
                 if active and all(a['motion_status'] & MDN and
@@ -440,6 +572,26 @@ class PCIe8332Controller:
                                (1 if d.positive_direction else -1) for d, value in zip(selected, request.targets)]
                     if not all(math.isfinite(t) and abs(t) <= 2**53 - 1 for t in targets):
                         raise ControlError('目标超出 APS F64 可精确表示的位置范围。')
+                    # Re-read immediately before submitting, including a target racing an input edge.
+                    fresh_limits = self.read_inputs(selected)
+                    blocked = []
+                    for d, target in zip(selected, targets):
+                        sensor = fresh_limits[d.order]
+                        self.check_limit_feedback(d, sensor)
+                        if d.endpoints:
+                            position = api.value('APS_get_position_f', d.axis_id)
+                            if any(sensor['triggered' if prefix == 'extension' else 'retraction_triggered']
+                                   and (target - position) * direction > 0
+                                   for prefix, _, _, direction in d.endpoints):
+                                blocked.append(d.order)
+                    if blocked:
+                        history.append(dict(number=request.number, targets_deg=list(request.targets),
+                                            blocked_orders=blocked, stage='limit_blocked'))
+                        callback(dict(kind='limit_blocked', limits={**limits, **fresh_limits},
+                                      text=f'电机 {blocked} 端点限位触发，目标已拦截；可提交反向目标'))
+                        blocked_message = True
+                        stop.wait(self.options['poll_interval_s'])
+                        continue  # Discard this request; never resume it when the sensor clears.
                     for d, target in zip(selected, targets):
                         check_stop()
                         if last_targets.get(d.axis_id) == target:
@@ -451,6 +603,10 @@ class PCIe8332Controller:
                         api.call('APS_ptp_all', d.axis_id, 0, target, 0., velocity, 0.,
                                  acceleration, acceleration, 0., None)
                         last_targets[d.axis_id] = target
+                        limit_stops.discard(d.axis_id)
+                    if blocked_message:
+                        callback(dict(kind='phase', text='连续使能就绪；已接受新目标'))
+                        blocked_message = False
                     report['started_commands'] += 1
                     if active:
                         active['superseded'] = True
