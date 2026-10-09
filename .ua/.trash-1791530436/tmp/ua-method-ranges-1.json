@@ -1,0 +1,821 @@
+{
+  "app.py": {
+    "App.__init__": {
+      "name": "__init__",
+      "owner": "App",
+      "startLine": 35,
+      "endLine": 83
+    },
+    "App._style": {
+      "name": "_style",
+      "owner": "App",
+      "startLine": 85,
+      "endLine": 100
+    },
+    "App._layout": {
+      "name": "_layout",
+      "owner": "App",
+      "startLine": 102,
+      "endLine": 216
+    },
+    "App.append": {
+      "name": "append",
+      "owner": "App",
+      "startLine": 218,
+      "endLine": 222
+    },
+    "App.update_summary": {
+      "name": "update_summary",
+      "owner": "App",
+      "startLine": 224,
+      "endLine": 239
+    },
+    "App.update_buttons": {
+      "name": "update_buttons",
+      "owner": "App",
+      "startLine": 241,
+      "endLine": 264
+    },
+    "App.refresh_adapters": {
+      "name": "refresh_adapters",
+      "owner": "App",
+      "startLine": 266,
+      "endLine": 284
+    },
+    "App.adapter": {
+      "name": "adapter",
+      "owner": "App",
+      "startLine": 286,
+      "endLine": 290
+    },
+    "App.adapter_changed": {
+      "name": "adapter_changed",
+      "owner": "App",
+      "startLine": 292,
+      "endLine": 301
+    },
+    "App.submit": {
+      "name": "submit",
+      "owner": "App",
+      "startLine": 303,
+      "endLine": 316
+    },
+    "App.scan": {
+      "name": "scan",
+      "owner": "App",
+      "startLine": 318,
+      "endLine": 336
+    },
+    "App.toggle": {
+      "name": "toggle",
+      "owner": "App",
+      "startLine": 338,
+      "endLine": 355
+    },
+    "App.select_all": {
+      "name": "select_all",
+      "owner": "App",
+      "startLine": 357,
+      "endLine": 361
+    },
+    "App.render_selection": {
+      "name": "render_selection",
+      "owner": "App",
+      "startLine": 363,
+      "endLine": 371
+    },
+    "App.run_motion": {
+      "name": "run_motion",
+      "owner": "App",
+      "startLine": 373,
+      "endLine": 401
+    },
+    "App.toggle_continuous": {
+      "name": "toggle_continuous",
+      "owner": "App",
+      "startLine": 403,
+      "endLine": 435
+    },
+    "App.set_target": {
+      "name": "set_target",
+      "owner": "App",
+      "startLine": 437,
+      "endLine": 440
+    },
+    "App.sync_slider": {
+      "name": "sync_slider",
+      "owner": "App",
+      "startLine": 442,
+      "endLine": 468
+    },
+    "App.apply_slider_range": {
+      "name": "apply_slider_range",
+      "owner": "App",
+      "startLine": 470,
+      "endLine": 486
+    },
+    "App.slider_changed": {
+      "name": "slider_changed",
+      "owner": "App",
+      "startLine": 488,
+      "endLine": 514
+    },
+    "App.edit_target": {
+      "name": "edit_target",
+      "owner": "App",
+      "startLine": 516,
+      "endLine": 535
+    },
+    "App.finish_target_edit": {
+      "name": "finish_target_edit",
+      "owner": "App",
+      "startLine": 537,
+      "endLine": 544
+    },
+    "App.show_queued": {
+      "name": "show_queued",
+      "owner": "App",
+      "startLine": 546,
+      "endLine": 552
+    },
+    "App.queue_relative": {
+      "name": "queue_relative",
+      "owner": "App",
+      "startLine": 554,
+      "endLine": 566
+    },
+    "App.send_targets": {
+      "name": "send_targets",
+      "owner": "App",
+      "startLine": 568,
+      "endLine": 577
+    },
+    "App.stop": {
+      "name": "stop",
+      "owner": "App",
+      "startLine": 579,
+      "endLine": 590
+    },
+    "App.poll": {
+      "name": "poll",
+      "owner": "App",
+      "startLine": 592,
+      "endLine": 686
+    },
+    "App.finish_close": {
+      "name": "finish_close",
+      "owner": "App",
+      "startLine": 688,
+      "endLine": 694
+    },
+    "App.close": {
+      "name": "close",
+      "owner": "App",
+      "startLine": 696,
+      "endLine": 702
+    }
+  },
+  "cli.py": {},
+  "continuous_control.py": {
+    "_ManualSession.__init__": {
+      "name": "__init__",
+      "owner": "_ManualSession",
+      "startLine": 14,
+      "endLine": 24
+    },
+    "_ManualSession.check_stop": {
+      "name": "check_stop",
+      "owner": "_ManualSession",
+      "startLine": 26,
+      "endLine": 29
+    },
+    "_ManualSession.tick": {
+      "name": "tick",
+      "owner": "_ManualSession",
+      "startLine": 31,
+      "endLine": 36
+    },
+    "_ManualSession.update_feedback": {
+      "name": "update_feedback",
+      "owner": "_ManualSession",
+      "startLine": 38,
+      "endLine": 41
+    },
+    "_ManualSession.travel_degrees": {
+      "name": "travel_degrees",
+      "owner": "_ManualSession",
+      "startLine": 43,
+      "endLine": 44
+    },
+    "_ManualSession.check_travel": {
+      "name": "check_travel",
+      "owner": "_ManualSession",
+      "startLine": 46,
+      "endLine": 54
+    },
+    "_ManualSession.motion": {
+      "name": "motion",
+      "owner": "_ManualSession",
+      "startLine": 56,
+      "endLine": 143
+    },
+    "_ManualSession.cleanup": {
+      "name": "cleanup",
+      "owner": "_ManualSession",
+      "startLine": 145,
+      "endLine": 152
+    }
+  },
+  "core.py": {
+    "EtherCATController.__init__": {
+      "name": "__init__",
+      "owner": "EtherCATController",
+      "startLine": 61,
+      "endLine": 64
+    },
+    "EtherCATController.adapters": {
+      "name": "adapters",
+      "owner": "EtherCATController",
+      "startLine": 67,
+      "endLine": 69
+    },
+    "EtherCATController._discover": {
+      "name": "_discover",
+      "owner": "EtherCATController",
+      "startLine": 71,
+      "endLine": 90
+    },
+    "EtherCATController.scan": {
+      "name": "scan",
+      "owner": "EtherCATController",
+      "startLine": 92,
+      "endLine": 102
+    },
+    "EtherCATController.execute": {
+      "name": "execute",
+      "owner": "EtherCATController",
+      "startLine": 104,
+      "endLine": 117
+    },
+    "_Session.__init__": {
+      "name": "__init__",
+      "owner": "_Session",
+      "startLine": 121,
+      "endLine": 144
+    },
+    "_Session.emit": {
+      "name": "emit",
+      "owner": "_Session",
+      "startLine": 146,
+      "endLine": 150
+    },
+    "_Session.journal": {
+      "name": "journal",
+      "owner": "_Session",
+      "startLine": 152,
+      "endLine": 156
+    },
+    "_Session.write": {
+      "name": "write",
+      "owner": "_Session",
+      "startLine": 158,
+      "endLine": 161
+    },
+    "_Session.check_stop": {
+      "name": "check_stop",
+      "owner": "_Session",
+      "startLine": 163,
+      "endLine": 165
+    },
+    "_Session.setup": {
+      "name": "setup",
+      "owner": "_Session",
+      "startLine": 167,
+      "endLine": 302
+    },
+    "_Session.update_feedback": {
+      "name": "update_feedback",
+      "owner": "_Session",
+      "startLine": 304,
+      "endLine": 305
+    },
+    "_Session.travel_degrees": {
+      "name": "travel_degrees",
+      "owner": "_Session",
+      "startLine": 307,
+      "endLine": 308
+    },
+    "_Session.check_travel": {
+      "name": "check_travel",
+      "owner": "_Session",
+      "startLine": 310,
+      "endLine": 314
+    },
+    "_Session.tick": {
+      "name": "tick",
+      "owner": "_Session",
+      "startLine": 316,
+      "endLine": 396
+    },
+    "_Session.selected": {
+      "name": "selected",
+      "owner": "_Session",
+      "startLine": 398,
+      "endLine": 399
+    },
+    "_Session.wait_all": {
+      "name": "wait_all",
+      "owner": "_Session",
+      "startLine": 401,
+      "endLine": 407
+    },
+    "_Session.hold": {
+      "name": "hold",
+      "owner": "_Session",
+      "startLine": 409,
+      "endLine": 412
+    },
+    "_Session.command": {
+      "name": "command",
+      "owner": "_Session",
+      "startLine": 414,
+      "endLine": 416
+    },
+    "_Session.motion": {
+      "name": "motion",
+      "owner": "_Session",
+      "startLine": 418,
+      "endLine": 456
+    },
+    "_Session.cleanup": {
+      "name": "cleanup",
+      "owner": "_Session",
+      "startLine": 458,
+      "endLine": 517
+    },
+    "_Session.run": {
+      "name": "run",
+      "owner": "_Session",
+      "startLine": 519,
+      "endLine": 549
+    }
+  },
+  "platform_control.py": {
+    "CommandInbox.__init__": {
+      "name": "__init__",
+      "owner": "CommandInbox",
+      "startLine": 19,
+      "endLine": 31
+    },
+    "CommandInbox.halt": {
+      "name": "halt",
+      "owner": "CommandInbox",
+      "startLine": 33,
+      "endLine": 37
+    },
+    "CommandInbox.accept": {
+      "name": "accept",
+      "owner": "CommandInbox",
+      "startLine": 39,
+      "endLine": 62
+    },
+    "CommandInbox.get": {
+      "name": "get",
+      "owner": "CommandInbox",
+      "startLine": 64,
+      "endLine": 66
+    },
+    "CommandInbox.check": {
+      "name": "check",
+      "owner": "CommandInbox",
+      "startLine": 68,
+      "endLine": 75
+    },
+    "UDPBridge.__init__": {
+      "name": "__init__",
+      "owner": "UDPBridge",
+      "startLine": 80,
+      "endLine": 87
+    },
+    "UDPBridge.__enter__": {
+      "name": "__enter__",
+      "owner": "UDPBridge",
+      "startLine": 89,
+      "endLine": 99
+    },
+    "UDPBridge.__exit__": {
+      "name": "__exit__",
+      "owner": "UDPBridge",
+      "startLine": 101,
+      "endLine": 104
+    },
+    "UDPBridge.publish": {
+      "name": "publish",
+      "owner": "UDPBridge",
+      "startLine": 106,
+      "endLine": 118
+    },
+    "UDPBridge._reply": {
+      "name": "_reply",
+      "owner": "UDPBridge",
+      "startLine": 120,
+      "endLine": 128
+    },
+    "UDPBridge._receive": {
+      "name": "_receive",
+      "owner": "UDPBridge",
+      "startLine": 130,
+      "endLine": 134
+    },
+    "UDPBridge._receive_loop": {
+      "name": "_receive_loop",
+      "owner": "UDPBridge",
+      "startLine": 136,
+      "endLine": 169
+    },
+    "_ContinuousSession.__init__": {
+      "name": "__init__",
+      "owner": "_ContinuousSession",
+      "startLine": 173,
+      "endLine": 181
+    },
+    "_ContinuousSession.check_stop": {
+      "name": "check_stop",
+      "owner": "_ContinuousSession",
+      "startLine": 183,
+      "endLine": 185
+    },
+    "_ContinuousSession.tick": {
+      "name": "tick",
+      "owner": "_ContinuousSession",
+      "startLine": 187,
+      "endLine": 194
+    },
+    "_ContinuousSession.motion": {
+      "name": "motion",
+      "owner": "_ContinuousSession",
+      "startLine": 196,
+      "endLine": 246
+    }
+  },
+  "test_app_continuous.py": {
+    "AppTests.setUp": {
+      "name": "setUp",
+      "owner": "AppTests",
+      "startLine": 14,
+      "endLine": 32
+    },
+    "AppTests.tearDown": {
+      "name": "tearDown",
+      "owner": "AppTests",
+      "startLine": 34,
+      "endLine": 41
+    },
+    "AppTests.run_fake": {
+      "name": "run_fake",
+      "owner": "AppTests",
+      "startLine": 43,
+      "endLine": 44
+    },
+    "AppTests.pump": {
+      "name": "pump",
+      "owner": "AppTests",
+      "startLine": 46,
+      "endLine": 51
+    },
+    "AppTests.enable": {
+      "name": "enable",
+      "owner": "AppTests",
+      "startLine": 53,
+      "endLine": 57
+    },
+    "AppTests.test_edit_targets_relative_origin_and_disable": {
+      "name": "test_edit_targets_relative_origin_and_disable",
+      "owner": "AppTests",
+      "startLine": 59,
+      "endLine": 98
+    },
+    "AppTests.test_cancel_preparation_blocks_late_ready_event": {
+      "name": "test_cancel_preparation_blocks_late_ready_event",
+      "owner": "AppTests",
+      "startLine": 100,
+      "endLine": 108
+    },
+    "AppTests.test_single_motion_keeps_its_original_behavior": {
+      "name": "test_single_motion_keeps_its_original_behavior",
+      "owner": "AppTests",
+      "startLine": 110,
+      "endLine": 121
+    },
+    "AppTests.test_live_slider_controls_checked_motors_and_range_changes_do_not_move": {
+      "name": "test_live_slider_controls_checked_motors_and_range_changes_do_not_move",
+      "owner": "AppTests",
+      "startLine": 123,
+      "endLine": 152
+    },
+    "AppTests.test_slider_selection_change_and_mixed_targets_do_not_send": {
+      "name": "test_slider_selection_change_and_mixed_targets_do_not_send",
+      "owner": "AppTests",
+      "startLine": 154,
+      "endLine": 173
+    },
+    "AppTests.test_disabled_slider_only_edits_target": {
+      "name": "test_disabled_slider_only_edits_target",
+      "owner": "AppTests",
+      "startLine": 175,
+      "endLine": 187
+    }
+  },
+  "test_continuous_control.py": {
+    "QueueTests.test_profile_has_no_software_upper_or_lower_range": {
+      "name": "test_profile_has_no_software_upper_or_lower_range",
+      "owner": "QueueTests",
+      "startLine": 13,
+      "endLine": 23
+    },
+    "QueueTests.test_latest_relative_projection_and_atomic_rejection": {
+      "name": "test_latest_relative_projection_and_atomic_rejection",
+      "owner": "QueueTests",
+      "startLine": 25,
+      "endLine": 41
+    },
+    "QueueTests.test_finiteness_latest_slot_and_closed_session": {
+      "name": "test_finiteness_latest_slot_and_closed_session",
+      "owner": "QueueTests",
+      "startLine": 43,
+      "endLine": 59
+    },
+    "QueueTests.test_command_duration_controls_timeout": {
+      "name": "test_command_duration_controls_timeout",
+      "owner": "QueueTests",
+      "startLine": 61,
+      "endLine": 67
+    },
+    "QueueTests.test_cumulative_targets_have_no_degree_limit": {
+      "name": "test_cumulative_targets_have_no_degree_limit",
+      "owner": "QueueTests",
+      "startLine": 69,
+      "endLine": 76
+    },
+    "CommunicationTests.session": {
+      "name": "session",
+      "owner": "CommunicationTests",
+      "startLine": 80,
+      "endLine": 89
+    },
+    "CommunicationTests.test_transient_timeout_and_partial_wkc_retry_without_new_target_edge": {
+      "name": "test_transient_timeout_and_partial_wkc_retry_without_new_target_edge",
+      "owner": "CommunicationTests",
+      "startLine": 91,
+      "endLine": 111
+    },
+    "CommunicationTests.test_persistent_wkc_failure_is_bounded": {
+      "name": "test_persistent_wkc_failure_is_bounded",
+      "owner": "CommunicationTests",
+      "startLine": 113,
+      "endLine": 124
+    },
+    "CommunicationTests.test_stop_prevents_retry_and_slow_recovery_still_stops": {
+      "name": "test_stop_prevents_retry_and_slow_recovery_still_stops",
+      "owner": "CommunicationTests",
+      "startLine": 126,
+      "endLine": 145
+    },
+    "CommunicationTests.test_alarm_after_recovery_is_not_ignored": {
+      "name": "test_alarm_after_recovery_is_not_ignored",
+      "owner": "CommunicationTests",
+      "startLine": 147,
+      "endLine": 159
+    },
+    "SessionTests.test_transient_wkc_during_target_ack_continues_and_restores": {
+      "name": "test_transient_wkc_during_target_ack_continues_and_restores",
+      "owner": "SessionTests",
+      "startLine": 163,
+      "endLine": 185
+    },
+    "SessionTests.make_controller": {
+      "name": "make_controller",
+      "owner": "SessionTests",
+      "startLine": 187,
+      "endLine": 190
+    },
+    "SessionTests.assert_clean": {
+      "name": "assert_clean",
+      "owner": "SessionTests",
+      "startLine": 192,
+      "endLine": 204
+    },
+    "SessionTests.test_high_profile_and_tiny_positive_profile_use_native_parameters": {
+      "name": "test_high_profile_and_tiny_positive_profile_use_native_parameters",
+      "owner": "SessionTests",
+      "startLine": 206,
+      "endLine": 220
+    },
+    "SessionTests.test_native_overflow_rejected_before_parameter_writes_or_enable": {
+      "name": "test_native_overflow_rejected_before_parameter_writes_or_enable",
+      "owner": "SessionTests",
+      "startLine": 222,
+      "endLine": 238
+    },
+    "SessionTests.test_enable_holds_three_axes_and_idle_stays_enabled": {
+      "name": "test_enable_holds_three_axes_and_idle_stays_enabled",
+      "owner": "SessionTests",
+      "startLine": 240,
+      "endLine": 287
+    },
+    "SessionTests.test_stop_during_first_move_clears_later_commands": {
+      "name": "test_stop_during_first_move_clears_later_commands",
+      "owner": "SessionTests",
+      "startLine": 289,
+      "endLine": 309
+    },
+    "SessionTests.test_updates_while_moving_without_waiting_for_arrival": {
+      "name": "test_updates_while_moving_without_waiting_for_arrival",
+      "owner": "SessionTests",
+      "startLine": 311,
+      "endLine": 377
+    },
+    "SessionTests.test_fault_and_ack_timeout_disable_and_restore": {
+      "name": "test_fault_and_ack_timeout_disable_and_restore",
+      "owner": "SessionTests",
+      "startLine": 379,
+      "endLine": 409
+    },
+    "SessionTests.test_pre_cancel_never_enables": {
+      "name": "test_pre_cancel_never_enables",
+      "owner": "SessionTests",
+      "startLine": 411,
+      "endLine": 420
+    },
+    "SessionTests.test_unlimited_travel_and_feedback_across_multiple_encoder_rollovers": {
+      "name": "test_unlimited_travel_and_feedback_across_multiple_encoder_rollovers",
+      "owner": "SessionTests",
+      "startLine": 422,
+      "endLine": 450
+    }
+  },
+  "test_platform_control.py": {
+    "FakeSlave.__init__": {
+      "name": "__init__",
+      "owner": "FakeSlave",
+      "startLine": 14,
+      "endLine": 34
+    },
+    "FakeSlave.sdo_read": {
+      "name": "sdo_read",
+      "owner": "FakeSlave",
+      "startLine": 36,
+      "endLine": 40
+    },
+    "FakeSlave.sdo_write": {
+      "name": "sdo_write",
+      "owner": "FakeSlave",
+      "startLine": 42,
+      "endLine": 43
+    },
+    "FakeSlave._fprd": {
+      "name": "_fprd",
+      "owner": "FakeSlave",
+      "startLine": 45,
+      "endLine": 47
+    },
+    "FakeSlave.dc_sync": {
+      "name": "dc_sync",
+      "owner": "FakeSlave",
+      "startLine": 49,
+      "endLine": 50
+    },
+    "FakeSlave.exchange": {
+      "name": "exchange",
+      "owner": "FakeSlave",
+      "startLine": 52,
+      "endLine": 66
+    },
+    "FakeMaster.__init__": {
+      "name": "__init__",
+      "owner": "FakeMaster",
+      "startLine": 70,
+      "endLine": 73
+    },
+    "FakeMaster.open": {
+      "name": "open",
+      "owner": "FakeMaster",
+      "startLine": 75,
+      "endLine": 76
+    },
+    "FakeMaster.close": {
+      "name": "close",
+      "owner": "FakeMaster",
+      "startLine": 78,
+      "endLine": 79
+    },
+    "FakeMaster.config_init": {
+      "name": "config_init",
+      "owner": "FakeMaster",
+      "startLine": 81,
+      "endLine": 82
+    },
+    "FakeMaster.state_check": {
+      "name": "state_check",
+      "owner": "FakeMaster",
+      "startLine": 84,
+      "endLine": 85
+    },
+    "FakeMaster.read_state": {
+      "name": "read_state",
+      "owner": "FakeMaster",
+      "startLine": 87,
+      "endLine": 88
+    },
+    "FakeMaster.write_state": {
+      "name": "write_state",
+      "owner": "FakeMaster",
+      "startLine": 90,
+      "endLine": 92
+    },
+    "FakeMaster.config_map": {
+      "name": "config_map",
+      "owner": "FakeMaster",
+      "startLine": 94,
+      "endLine": 95
+    },
+    "FakeMaster.config_dc": {
+      "name": "config_dc",
+      "owner": "FakeMaster",
+      "startLine": 97,
+      "endLine": 98
+    },
+    "FakeMaster.send_processdata": {
+      "name": "send_processdata",
+      "owner": "FakeMaster",
+      "startLine": 100,
+      "endLine": 102
+    },
+    "FakeMaster.receive_processdata": {
+      "name": "receive_processdata",
+      "owner": "FakeMaster",
+      "startLine": 104,
+      "endLine": 105
+    },
+    "InboxTests.packet": {
+      "name": "packet",
+      "owner": "InboxTests",
+      "startLine": 109,
+      "endLine": 111
+    },
+    "InboxTests.test_latest_absolute_target_and_reorder": {
+      "name": "test_latest_absolute_target_and_reorder",
+      "owner": "InboxTests",
+      "startLine": 113,
+      "endLine": 119
+    },
+    "InboxTests.test_timeout_after_first_command_before_enable": {
+      "name": "test_timeout_after_first_command_before_enable",
+      "owner": "InboxTests",
+      "startLine": 121,
+      "endLine": 126
+    },
+    "InboxTests.test_validation_and_stale_session": {
+      "name": "test_validation_and_stale_session",
+      "owner": "InboxTests",
+      "startLine": 128,
+      "endLine": 137
+    },
+    "InboxTests.test_disable_is_latched_even_out_of_order": {
+      "name": "test_disable_is_latched_even_out_of_order",
+      "owner": "InboxTests",
+      "startLine": 139,
+      "endLine": 145
+    },
+    "InboxTests.test_udp_handshake_peer_and_fault": {
+      "name": "test_udp_handshake_peer_and_fault",
+      "owner": "InboxTests",
+      "startLine": 147,
+      "endLine": 165
+    },
+    "SessionTests.test_single_move_still_completes": {
+      "name": "test_single_move_still_completes",
+      "owner": "SessionTests",
+      "startLine": 169,
+      "endLine": 177
+    },
+    "SessionTests.test_watchdog_wkc_and_limit_fail_closed": {
+      "name": "test_watchdog_wkc_and_limit_fail_closed",
+      "owner": "SessionTests",
+      "startLine": 179,
+      "endLine": 216
+    },
+    "SessionTests.test_persistent_motion_wrap_direction_stop_and_restore": {
+      "name": "test_persistent_motion_wrap_direction_stop_and_restore",
+      "owner": "SessionTests",
+      "startLine": 218,
+      "endLine": 261
+    },
+    "SessionTests.test_pre_cancel_never_enables": {
+      "name": "test_pre_cancel_never_enables",
+      "owner": "SessionTests",
+      "startLine": 263,
+      "endLine": 274
+    }
+  }
+}

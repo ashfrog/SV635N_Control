@@ -1,0 +1,46 @@
+{
+  "files": 43,
+  "byCategory": {
+    "docs": 9,
+    "code": 27,
+    "config": 2,
+    "script": 5
+  },
+  "nodeTypes": {
+    "file": 32,
+    "function": 189,
+    "class": 40,
+    "document": 9,
+    "config": 2
+  },
+  "edgeTypes": {
+    "contains": 397,
+    "exports": 71,
+    "imports": 48,
+    "tested_by": 25,
+    "calls": 333,
+    "inherits": 4,
+    "related": 1,
+    "depends_on": 15,
+    "documents": 31,
+    "configures": 10,
+    "triggers": 4
+  },
+  "layers": [
+    "Backend Service",
+    "Hardware And Shared Control",
+    "Portable UDP Client",
+    "Legacy Direct EtherCAT",
+    "Legacy Unreal Integration",
+    "Regression Tests",
+    "Documentation",
+    "Configuration And Launchers"
+  ],
+  "tourSteps": 12,
+  "notes": [
+    "Batch/requirements formats lack specialized structural parsers; their complete source was read to supply file semantics.",
+    "Bundled class extraction lists method names without line ranges; significant method positions were verified against source.",
+    "Static calls are source-grounded references, not proof of runtime execution or hardware behavior.",
+    "Legacy UE three-axis packets are incompatible with the current v1 UDP RPC protocol."
+  ]
+}

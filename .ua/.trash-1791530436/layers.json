@@ -1,0 +1,50 @@
+[
+  {
+    "id": "layer:backend-service",
+    "name": "Backend Service",
+    "description": "The authoritative backend.py entry point starts tray or headless operation, while versioned UDP RPC and MotorService manage ownership, asynchronous runs, feedback, and watchdog shutdown using APS by default or explicitly injected legacy controllers.",
+    "nodeIds": ["file:backend.py", "file:udp_server.py", "file:motor_service.py"]
+  },
+  {
+    "id": "layer:hardware-and-shared-control",
+    "name": "Hardware And Shared Control",
+    "description": "ADLINK APS bindings own PCIe-8332 motion and endpoint protection, while shared hardware-independent device types, locking, validation, and motion queues support both current and legacy controllers.",
+    "nodeIds": ["file:aps_backend.py", "file:control_common.py"]
+  },
+  {
+    "id": "layer:portable-udp-client",
+    "name": "Portable UDP Client",
+    "description": "The independent UdpControl package supplies the standard-library SDK, JSON codecs, protocol version, Tk debug panel, GUI entry point, and command-line motion example without hardware imports.",
+    "nodeIds": ["file:UdpControl/__init__.py", "file:UdpControl/__main__.py", "file:UdpControl/client.py", "file:UdpControl/debug_ui.py", "file:UdpControl/example_client.py", "file:UdpControl/wire.py"]
+  },
+  {
+    "id": "layer:legacy-direct-ethercat",
+    "name": "Legacy Direct EtherCAT",
+    "description": "Retained pysoem direct-NIC controllers, continuous local sessions, CLI, and app.py Tk frontend implement discovery and CiA402 motion alongside the older three-axis bridge host.",
+    "nodeIds": ["file:app.py", "file:cli.py", "file:continuous_control.py", "file:core.py", "file:platform_control.py"]
+  },
+  {
+    "id": "layer:legacy-unreal-integration",
+    "name": "Legacy Unreal Integration",
+    "description": "The Unreal Blueprint component and Python demo stream motor-angle targets through the retained three-axis bridge protocol, which is incompatible with the current versioned UDP RPC backend.",
+    "nodeIds": ["file:UE/SV635NMotionComponent.cpp", "file:UE/SV635NMotionComponent.h", "file:ue_demo.py"]
+  },
+  {
+    "id": "layer:regression-tests",
+    "name": "Regression Tests",
+    "description": "Fake-hardware, GUI, protocol, deployment-isolation, and loopback UDP regressions verify APS and legacy motion, ordering, watchdogs, cleanup, endpoint feedback, retries, and portable-client integration.",
+    "nodeIds": ["file:test_app_continuous.py", "file:test_aps_backend.py", "file:test_continuous_control.py", "file:test_platform_control.py", "file:test_udp_layout.py", "file:test_udp_protocol.py", "file:test_udp_service.py", "file:test_udp_ui.py"]
+  },
+  {
+    "id": "layer:documentation",
+    "name": "Documentation",
+    "description": "Project, backend, portable-client, and legacy integration guides document installation, operating procedures, protocol contracts, and dependency requirements for the distinct controller paths.",
+    "nodeIds": ["document:README.md", "document:UE接入.md", "document:使用说明.md", "document:后台说明.md", "document:UdpControl/PROTOCOL.md", "document:UdpControl/README.md", "document:requirements.txt", "document:requirements-legacy.txt", "document:UdpControl/requirements.txt"]
+  },
+  {
+    "id": "layer:configuration-and-launchers",
+    "name": "Configuration And Launchers",
+    "description": "Example endpoint and APS settings plus Windows command launchers configure server/client deployment, start tray or console processes, and install backend dependencies.",
+    "nodeIds": ["config:backend.config.example.json", "config:UdpControl/config.example.json", "file:启动后台.cmd", "file:启动后台控制台.cmd", "file:启动源码.cmd", "file:安装后台依赖.cmd", "file:UdpControl/启动界面.cmd"]
+  }
+]

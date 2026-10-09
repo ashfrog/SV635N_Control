@@ -1,0 +1,123 @@
+{
+  "scriptCompleted": true,
+  "stats": {
+    "filesScanned": 43,
+    "filesWithImports": 21,
+    "totalEdges": 48
+  },
+  "failures": [],
+  "importMap": {
+    "README.md": [],
+    "UE/SV635NMotionComponent.cpp": [
+      "UE/SV635NMotionComponent.h"
+    ],
+    "UE/SV635NMotionComponent.h": [],
+    "UE接入.md": [],
+    "UdpControl/PROTOCOL.md": [],
+    "UdpControl/README.md": [],
+    "UdpControl/__init__.py": [],
+    "UdpControl/__main__.py": [
+      "UdpControl/debug_ui.py"
+    ],
+    "UdpControl/client.py": [
+      "UdpControl/wire.py"
+    ],
+    "UdpControl/config.example.json": [],
+    "UdpControl/debug_ui.py": [
+      "UdpControl/client.py"
+    ],
+    "UdpControl/example_client.py": [
+      "UdpControl/client.py"
+    ],
+    "UdpControl/requirements.txt": [],
+    "UdpControl/wire.py": [],
+    "UdpControl/启动界面.cmd": [],
+    "app.py": [
+      "continuous_control.py",
+      "core.py"
+    ],
+    "aps_backend.py": [
+      "control_common.py"
+    ],
+    "backend.config.example.json": [],
+    "backend.py": [
+      "aps_backend.py",
+      "motor_service.py",
+      "udp_server.py"
+    ],
+    "cli.py": [
+      "core.py"
+    ],
+    "continuous_control.py": [
+      "control_common.py",
+      "core.py"
+    ],
+    "control_common.py": [],
+    "core.py": [
+      "control_common.py"
+    ],
+    "motor_service.py": [
+      "aps_backend.py",
+      "control_common.py"
+    ],
+    "platform_control.py": [
+      "core.py"
+    ],
+    "requirements-legacy.txt": [],
+    "requirements.txt": [],
+    "test_app_continuous.py": [
+      "app.py",
+      "continuous_control.py",
+      "core.py",
+      "test_platform_control.py"
+    ],
+    "test_aps_backend.py": [
+      "UdpControl/client.py",
+      "aps_backend.py",
+      "backend.py",
+      "control_common.py",
+      "motor_service.py",
+      "udp_server.py"
+    ],
+    "test_continuous_control.py": [
+      "continuous_control.py",
+      "core.py",
+      "test_platform_control.py"
+    ],
+    "test_platform_control.py": [
+      "core.py",
+      "platform_control.py"
+    ],
+    "test_udp_layout.py": [],
+    "test_udp_protocol.py": [
+      "UdpControl/client.py",
+      "core.py",
+      "udp_server.py"
+    ],
+    "test_udp_service.py": [
+      "UdpControl/client.py",
+      "core.py",
+      "motor_service.py",
+      "test_platform_control.py",
+      "udp_server.py"
+    ],
+    "test_udp_ui.py": [
+      "UdpControl/debug_ui.py",
+      "backend.py",
+      "core.py",
+      "motor_service.py",
+      "test_platform_control.py",
+      "udp_server.py"
+    ],
+    "udp_server.py": [
+      "control_common.py"
+    ],
+    "ue_demo.py": [],
+    "使用说明.md": [],
+    "后台说明.md": [],
+    "启动后台.cmd": [],
+    "启动后台控制台.cmd": [],
+    "启动源码.cmd": [],
+    "安装后台依赖.cmd": []
+  }
+}

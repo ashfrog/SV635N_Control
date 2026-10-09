@@ -1,0 +1,842 @@
+{
+  "nodes": [
+    {
+      "id": "file:continuous_control.py",
+      "type": "file",
+      "name": "continuous_control.py",
+      "filePath": "continuous_control.py",
+      "summary": "Legacy persistent local PP controller extending core._Session with a latest-target queue, immediate updates during motion, and encoder rollover tracking. It holds enabled axes while idle and closes command submission before restoring hardware parameters.",
+      "tags": [
+        "legacy",
+        "manual-control",
+        "motion-control",
+        "state-machine",
+        "ethercat"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "function:continuous_control.py:run_continuous",
+      "type": "function",
+      "name": "run_continuous",
+      "filePath": "continuous_control.py",
+      "summary": "Validates queued axis orders and runs the persistent manual session under the adapter lock, closing the queue regardless of outcome.",
+      "tags": [
+        "entry-point",
+        "manual-control",
+        "cleanup"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        155,
+        164
+      ]
+    },
+    {
+      "id": "class:continuous_control.py:_ManualSession",
+      "type": "class",
+      "name": "_ManualSession",
+      "filePath": "continuous_control.py",
+      "summary": "Persistent manual controller derived from _Session that enables once and accepts the newest immutable target without waiting for previous arrival. It tracks unwrapped encoder motion and bounded histories, then closes the queue during cleanup.",
+      "tags": [
+        "manual-control",
+        "motion-control",
+        "state-machine",
+        "encoder-rollover"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        13,
+        152
+      ]
+    },
+    {
+      "id": "function:continuous_control.py:_ManualSession.__init__",
+      "type": "function",
+      "name": "_ManualSession.__init__",
+      "filePath": "continuous_control.py",
+      "summary": "Creates placeholder profile moves for selected axes and initializes bounded trace/command history plus persistent-control report counters.",
+      "tags": [
+        "ethercat",
+        "motion-control",
+        "state-machine"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        14,
+        24
+      ]
+    },
+    {
+      "id": "function:continuous_control.py:_ManualSession.motion",
+      "type": "function",
+      "name": "_ManualSession.motion",
+      "filePath": "continuous_control.py",
+      "summary": "Enables axes once without moving and implements acknowledgement/reset handshakes for newest absolute PP targets. It replaces active targets immediately, tracks unwrapped arrival, and computes per-command timeouts with braking margin.",
+      "tags": [
+        "ethercat",
+        "motion-control",
+        "state-machine"
+      ],
+      "complexity": "complex",
+      "lineRange": [
+        56,
+        143
+      ]
+    },
+    {
+      "id": "file:core.py",
+      "type": "file",
+      "name": "core.py",
+      "filePath": "core.py",
+      "summary": "Legacy direct-NIC pysoem controller for discovery and validated CiA402 profile-position motion. Sessions verify drive identity, PDO/DC/watchdog settings, exchange cyclic feedback with bounded recovery, and disable drives before restoring temporary parameters.",
+      "tags": [
+        "legacy",
+        "ethercat",
+        "motion-control",
+        "cia402",
+        "hardware-backend"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "function:core.py:read",
+      "type": "function",
+      "name": "read",
+      "filePath": "core.py",
+      "summary": "Reads an integer from a drive SDO with up to three transport attempts, rejecting empty data and immediately propagating SDO protocol errors.",
+      "tags": [
+        "ethercat",
+        "sdo",
+        "retry"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        30,
+        42
+      ]
+    },
+    {
+      "id": "function:core.py:mapping",
+      "type": "function",
+      "name": "mapping",
+      "filePath": "core.py",
+      "summary": "Expands a drive PDO assignment and its referenced mapping objects into the exact list of mapped entries.",
+      "tags": [
+        "ethercat",
+        "pdo",
+        "validation"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        45,
+        50
+      ]
+    },
+    {
+      "id": "function:core.py:displacement",
+      "type": "function",
+      "name": "displacement",
+      "filePath": "core.py",
+      "summary": "Computes a signed modular 32-bit encoder displacement across rollover boundaries.",
+      "tags": [
+        "utility",
+        "encoder-rollover",
+        "motion-control"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        53,
+        54
+      ]
+    },
+    {
+      "id": "class:core.py:EtherCATController",
+      "type": "class",
+      "name": "EtherCATController",
+      "filePath": "core.py",
+      "summary": "Public legacy pysoem facade for adapter discovery, protected device scanning, and bounded move execution. Each operation opens and closes the master under a per-adapter lock.",
+      "tags": [
+        "hardware-backend",
+        "ethercat",
+        "legacy",
+        "service"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        59,
+        117
+      ]
+    },
+    {
+      "id": "function:core.py:EtherCATController._discover",
+      "type": "function",
+      "name": "EtherCATController._discover",
+      "filePath": "core.py",
+      "summary": "Discovers 1–16 supported SV635N devices in PRE-OP, rejects already-enabled or incompatible drives, and reads identity, gearing, motor, and status data.",
+      "tags": [
+        "ethercat",
+        "motion-control",
+        "state-machine"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        71,
+        90
+      ]
+    },
+    {
+      "id": "function:core.py:EtherCATController.scan",
+      "type": "function",
+      "name": "EtherCATController.scan",
+      "filePath": "core.py",
+      "summary": "Locks the adapter, opens a temporary master, discovers devices without enabling, and closes the master in finally.",
+      "tags": [
+        "ethercat",
+        "motion-control",
+        "state-machine"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        92,
+        102
+      ]
+    },
+    {
+      "id": "function:core.py:EtherCATController.execute",
+      "type": "function",
+      "name": "EtherCATController.execute",
+      "filePath": "core.py",
+      "summary": "Validates nonempty unique move requests against the discovery snapshot and runs a _Session under the adapter lock.",
+      "tags": [
+        "ethercat",
+        "motion-control",
+        "state-machine"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        104,
+        117
+      ]
+    },
+    {
+      "id": "class:core.py:_Session",
+      "type": "class",
+      "name": "_Session",
+      "filePath": "core.py",
+      "summary": "Direct-NIC EtherCAT session implementing drive validation, temporary PP configuration, 1 kHz PDO exchange, and CiA402 move handshakes. Its lifecycle always attempts disable verification and parameter restoration before returning a report.",
+      "tags": [
+        "ethercat",
+        "cia402",
+        "state-machine",
+        "cleanup"
+      ],
+      "complexity": "complex",
+      "lineRange": [
+        120,
+        549
+      ]
+    },
+    {
+      "id": "function:core.py:_Session.__init__",
+      "type": "function",
+      "name": "_Session.__init__",
+      "filePath": "core.py",
+      "summary": "Allocates the pysoem master and lifecycle flags, indexes selected moves, and prepares report, trace, and optional journal paths.",
+      "tags": [
+        "ethercat",
+        "motion-control",
+        "state-machine"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        121,
+        144
+      ]
+    },
+    {
+      "id": "function:core.py:_Session.setup",
+      "type": "function",
+      "name": "_Session.setup",
+      "filePath": "core.py",
+      "summary": "Revalidates the device snapshot, supported motor/PDO/DC/watchdog configuration, and native profile limits before applying temporary drive settings. It journals originals and verifies OP communication while keeping all motors disabled.",
+      "tags": [
+        "ethercat",
+        "motion-control",
+        "state-machine"
+      ],
+      "complexity": "complex",
+      "lineRange": [
+        167,
+        302
+      ]
+    },
+    {
+      "id": "function:core.py:_Session.tick",
+      "type": "function",
+      "name": "_Session.tick",
+      "filePath": "core.py",
+      "summary": "Stages PDO outputs and performs a paced exchange with bounded WKC recovery using identical controlwords and targets. It validates feedback, drive state, travel, and host lateness, then emits throttled status.",
+      "tags": [
+        "ethercat",
+        "motion-control",
+        "state-machine"
+      ],
+      "complexity": "complex",
+      "lineRange": [
+        316,
+        396
+      ]
+    },
+    {
+      "id": "function:core.py:_Session.motion",
+      "type": "function",
+      "name": "_Session.motion",
+      "filePath": "core.py",
+      "summary": "Enables selected axes through CiA402 transitions and triggers one relative PP move with acknowledgement, arrival, and disable verification.",
+      "tags": [
+        "ethercat",
+        "motion-control",
+        "state-machine"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        418,
+        456
+      ]
+    },
+    {
+      "id": "function:core.py:_Session.cleanup",
+      "type": "function",
+      "name": "_Session.cleanup",
+      "filePath": "core.py",
+      "summary": "Attempts quick stop and full disable verification, returns the bus to PRE-OP, disables DC synchronization, and restores saved temporary parameters before the save policy.",
+      "tags": [
+        "ethercat",
+        "motion-control",
+        "state-machine"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        458,
+        517
+      ]
+    },
+    {
+      "id": "function:core.py:_Session.run",
+      "type": "function",
+      "name": "_Session.run",
+      "filePath": "core.py",
+      "summary": "Runs setup and optional motion, converts cancellation/faults to reports, always invokes cleanup, and writes trace/journal files after hardware operation.",
+      "tags": [
+        "ethercat",
+        "motion-control",
+        "state-machine"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        519,
+        549
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "source": "file:continuous_control.py",
+      "target": "function:continuous_control.py:run_continuous",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:continuous_control.py",
+      "target": "function:continuous_control.py:run_continuous",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:continuous_control.py",
+      "target": "class:continuous_control.py:_ManualSession",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:continuous_control.py",
+      "target": "class:continuous_control.py:_ManualSession",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:continuous_control.py",
+      "target": "function:continuous_control.py:_ManualSession.__init__",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:continuous_control.py:_ManualSession",
+      "target": "function:continuous_control.py:_ManualSession.__init__",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:continuous_control.py",
+      "target": "function:continuous_control.py:_ManualSession.motion",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:continuous_control.py:_ManualSession",
+      "target": "function:continuous_control.py:_ManualSession.motion",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:continuous_control.py",
+      "target": "file:control_common.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:continuous_control.py",
+      "target": "file:core.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:core.py",
+      "target": "function:core.py:read",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core.py",
+      "target": "function:core.py:read",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:core.py",
+      "target": "function:core.py:mapping",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core.py",
+      "target": "function:core.py:mapping",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:core.py",
+      "target": "function:core.py:displacement",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core.py",
+      "target": "function:core.py:displacement",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:core.py",
+      "target": "class:core.py:EtherCATController",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core.py",
+      "target": "class:core.py:EtherCATController",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:core.py",
+      "target": "function:core.py:EtherCATController._discover",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:core.py:EtherCATController",
+      "target": "function:core.py:EtherCATController._discover",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core.py",
+      "target": "function:core.py:EtherCATController.scan",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:core.py:EtherCATController",
+      "target": "function:core.py:EtherCATController.scan",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core.py",
+      "target": "function:core.py:EtherCATController.execute",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:core.py:EtherCATController",
+      "target": "function:core.py:EtherCATController.execute",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core.py",
+      "target": "class:core.py:_Session",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core.py",
+      "target": "class:core.py:_Session",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:core.py",
+      "target": "function:core.py:_Session.__init__",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:core.py:_Session",
+      "target": "function:core.py:_Session.__init__",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core.py",
+      "target": "function:core.py:_Session.setup",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:core.py:_Session",
+      "target": "function:core.py:_Session.setup",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core.py",
+      "target": "function:core.py:_Session.tick",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:core.py:_Session",
+      "target": "function:core.py:_Session.tick",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core.py",
+      "target": "function:core.py:_Session.motion",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:core.py:_Session",
+      "target": "function:core.py:_Session.motion",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core.py",
+      "target": "function:core.py:_Session.cleanup",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:core.py:_Session",
+      "target": "function:core.py:_Session.cleanup",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core.py",
+      "target": "function:core.py:_Session.run",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:core.py:_Session",
+      "target": "function:core.py:_Session.run",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:core.py",
+      "target": "file:control_common.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "class:continuous_control.py:_ManualSession",
+      "target": "class:core.py:_Session",
+      "type": "inherits",
+      "direction": "forward",
+      "weight": 0.9
+    },
+    {
+      "source": "file:continuous_control.py",
+      "target": "file:test_app_continuous.py",
+      "type": "tested_by",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:continuous_control.py",
+      "target": "file:test_continuous_control.py",
+      "type": "tested_by",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:core.py",
+      "target": "file:test_app_continuous.py",
+      "type": "tested_by",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:core.py",
+      "target": "file:test_continuous_control.py",
+      "type": "tested_by",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:core.py",
+      "target": "file:test_platform_control.py",
+      "type": "tested_by",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "function:continuous_control.py:_ManualSession.__init__",
+      "target": "class:control_common.py:Move",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:continuous_control.py:_ManualSession.__init__",
+      "target": "function:core.py:_Session.__init__",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:continuous_control.py:_ManualSession.motion",
+      "target": "function:core.py:displacement",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:continuous_control.py:_ManualSession.motion",
+      "target": "function:core.py:_Session.tick",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:continuous_control.py:_ManualSession.motion",
+      "target": "class:control_common.py:Move",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:continuous_control.py:run_continuous",
+      "target": "function:control_common.py:adapter_lock",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:continuous_control.py:run_continuous",
+      "target": "class:continuous_control.py:_ManualSession",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:core.py:mapping",
+      "target": "function:core.py:read",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:core.py:EtherCATController._discover",
+      "target": "function:core.py:read",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:core.py:EtherCATController._discover",
+      "target": "class:control_common.py:Device",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:core.py:EtherCATController.scan",
+      "target": "function:control_common.py:adapter_lock",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:core.py:EtherCATController.scan",
+      "target": "function:core.py:EtherCATController._discover",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:core.py:EtherCATController.execute",
+      "target": "function:control_common.py:adapter_lock",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:core.py:EtherCATController.execute",
+      "target": "class:core.py:_Session",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:core.py:_Session.setup",
+      "target": "function:core.py:EtherCATController._discover",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:core.py:_Session.setup",
+      "target": "function:core.py:mapping",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:core.py:_Session.setup",
+      "target": "function:core.py:read",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:core.py:_Session.setup",
+      "target": "function:core.py:_Session.tick",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:core.py:_Session.motion",
+      "target": "function:core.py:displacement",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:core.py:_Session.motion",
+      "target": "function:core.py:_Session.tick",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:core.py:_Session.cleanup",
+      "target": "function:core.py:read",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:core.py:_Session.run",
+      "target": "function:core.py:_Session.setup",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:core.py:_Session.run",
+      "target": "function:core.py:_Session.motion",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:core.py:_Session.run",
+      "target": "function:core.py:_Session.cleanup",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:core.py:EtherCATController.execute",
+      "target": "function:core.py:_Session.run",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:continuous_control.py:run_continuous",
+      "target": "function:core.py:_Session.run",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    }
+  ]
+}

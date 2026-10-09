@@ -1,0 +1,84 @@
+{
+  "batchFiles": [
+    {
+      "path": "README.md",
+      "language": "markdown",
+      "sizeLines": 28,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "UE接入.md",
+      "language": "markdown",
+      "sizeLines": 98,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "backend.config.example.json",
+      "language": "json",
+      "sizeLines": 20,
+      "fileCategory": "config"
+    },
+    {
+      "path": "requirements-legacy.txt",
+      "language": "txt",
+      "sizeLines": 3,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "requirements.txt",
+      "language": "txt",
+      "sizeLines": 2,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "使用说明.md",
+      "language": "markdown",
+      "sizeLines": 148,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "后台说明.md",
+      "language": "markdown",
+      "sizeLines": 120,
+      "fileCategory": "docs"
+    },
+    {
+      "path": "启动后台.cmd",
+      "language": "batch",
+      "sizeLines": 8,
+      "fileCategory": "script"
+    },
+    {
+      "path": "启动后台控制台.cmd",
+      "language": "batch",
+      "sizeLines": 4,
+      "fileCategory": "script"
+    },
+    {
+      "path": "启动源码.cmd",
+      "language": "batch",
+      "sizeLines": 22,
+      "fileCategory": "script"
+    },
+    {
+      "path": "安装后台依赖.cmd",
+      "language": "batch",
+      "sizeLines": 4,
+      "fileCategory": "script"
+    }
+  ],
+  "batchImportData": {
+    "README.md": [],
+    "UE接入.md": [],
+    "backend.config.example.json": [],
+    "requirements-legacy.txt": [],
+    "requirements.txt": [],
+    "使用说明.md": [],
+    "后台说明.md": [],
+    "启动后台.cmd": [],
+    "启动后台控制台.cmd": [],
+    "启动源码.cmd": [],
+    "安装后台依赖.cmd": []
+  },
+  "projectRoot": "M:/GitHub/SV635N/SV635N_Control"
+}

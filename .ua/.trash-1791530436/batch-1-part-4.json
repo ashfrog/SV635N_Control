@@ -1,0 +1,1560 @@
+{
+  "nodes": [
+    {
+      "id": "file:test_continuous_control.py",
+      "type": "file",
+      "name": "test_continuous_control.py",
+      "filePath": "test_continuous_control.py",
+      "summary": "Hardware-free regressions for local latest-target queues and legacy EtherCAT sessions. They exercise numeric validation, bounded PDO recovery, immediate retargeting, idle enable, cleanup, and accumulated travel across encoder rollovers.",
+      "tags": [
+        "test",
+        "ethercat",
+        "manual-control",
+        "regression",
+        "hardware-emulation"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "class:test_continuous_control.py:QueueTests",
+      "type": "class",
+      "name": "QueueTests",
+      "filePath": "test_continuous_control.py",
+      "summary": "Validation and projection regressions for immutable latest-target MotionQueue commands, including finite positive profiles, atomic rejection, queue replacement, and closed sessions.",
+      "tags": [
+        "test",
+        "validation",
+        "latest-target",
+        "regression"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        12,
+        76
+      ]
+    },
+    {
+      "id": "function:test_continuous_control.py:QueueTests.test_profile_has_no_software_upper_or_lower_range",
+      "type": "function",
+      "name": "QueueTests.test_profile_has_no_software_upper_or_lower_range",
+      "filePath": "test_continuous_control.py",
+      "summary": "Accepts finite positive speed/acceleration profiles over very wide magnitudes and rejects zero, negative, boolean, nonfinite, and invalid values.",
+      "tags": [
+        "test",
+        "regression",
+        "hardware-emulation"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        13,
+        23
+      ]
+    },
+    {
+      "id": "function:test_continuous_control.py:QueueTests.test_latest_relative_projection_and_atomic_rejection",
+      "type": "function",
+      "name": "QueueTests.test_latest_relative_projection_and_atomic_rejection",
+      "filePath": "test_continuous_control.py",
+      "summary": "Checks readiness gating, immutable command targets, relative projection from planned targets, atomic invalid-command rejection, and single latest-slot replacement.",
+      "tags": [
+        "test",
+        "regression",
+        "hardware-emulation"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        25,
+        41
+      ]
+    },
+    {
+      "id": "function:test_continuous_control.py:QueueTests.test_finiteness_latest_slot_and_closed_session",
+      "type": "function",
+      "name": "QueueTests.test_finiteness_latest_slot_and_closed_session",
+      "filePath": "test_continuous_control.py",
+      "summary": "Rejects malformed targets, verifies repeated relative updates occupy one slot, and ensures closed sessions reject further submission while fresh queues reset state.",
+      "tags": [
+        "test",
+        "regression",
+        "hardware-emulation"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        43,
+        59
+      ]
+    },
+    {
+      "id": "class:test_continuous_control.py:CommunicationTests",
+      "type": "class",
+      "name": "CommunicationTests",
+      "filePath": "test_continuous_control.py",
+      "summary": "PDO recovery regressions using a fake master to ensure incomplete frames do not advance feedback or setpoint edges. They check bounded retries, cooperative stop, recovery timing, and alarm handling.",
+      "tags": [
+        "test",
+        "ethercat",
+        "fault-injection",
+        "regression"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        79,
+        159
+      ]
+    },
+    {
+      "id": "function:test_continuous_control.py:CommunicationTests.session",
+      "type": "function",
+      "name": "CommunicationTests.session",
+      "filePath": "test_continuous_control.py",
+      "summary": "Builds a fake legacy _Session with expected WKC and explicitly seeded axis outputs/feedback for focused PDO exchange tests.",
+      "tags": [
+        "test",
+        "regression",
+        "hardware-emulation"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        80,
+        89
+      ]
+    },
+    {
+      "id": "function:test_continuous_control.py:CommunicationTests.test_transient_timeout_and_partial_wkc_retry_without_new_target_edge",
+      "type": "function",
+      "name": "CommunicationTests.test_transient_timeout_and_partial_wkc_retry_without_new_target_edge",
+      "filePath": "test_continuous_control.py",
+      "summary": "Injects incomplete PDO frames and verifies identical setpoints are retried once, partial feedback is discarded, and motion is not triggered twice.",
+      "tags": [
+        "test",
+        "regression",
+        "hardware-emulation"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        91,
+        111
+      ]
+    },
+    {
+      "id": "function:test_continuous_control.py:CommunicationTests.test_persistent_wkc_failure_is_bounded",
+      "type": "function",
+      "name": "CommunicationTests.test_persistent_wkc_failure_is_bounded",
+      "filePath": "test_continuous_control.py",
+      "summary": "Checks persistent receive failure stops within five exchanges and neither updates feedback nor reports successful recovery.",
+      "tags": [
+        "test",
+        "regression",
+        "hardware-emulation"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        113,
+        124
+      ]
+    },
+    {
+      "id": "function:test_continuous_control.py:CommunicationTests.test_stop_prevents_retry_and_slow_recovery_still_stops",
+      "type": "function",
+      "name": "CommunicationTests.test_stop_prevents_retry_and_slow_recovery_still_stops",
+      "filePath": "test_continuous_control.py",
+      "summary": "Verifies stop requested during receive prevents another exchange and a recovery attempt exceeding the time budget still fails closed.",
+      "tags": [
+        "test",
+        "regression",
+        "hardware-emulation"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        126,
+        145
+      ]
+    },
+    {
+      "id": "function:test_continuous_control.py:CommunicationTests.test_alarm_after_recovery_is_not_ignored",
+      "type": "function",
+      "name": "CommunicationTests.test_alarm_after_recovery_is_not_ignored",
+      "filePath": "test_continuous_control.py",
+      "summary": "Injects a transient transport failure followed by valid feedback carrying an alarm and verifies the recovered frame still faults the session.",
+      "tags": [
+        "test",
+        "regression",
+        "hardware-emulation"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        147,
+        159
+      ]
+    },
+    {
+      "id": "class:test_continuous_control.py:SessionTests",
+      "type": "class",
+      "name": "SessionTests",
+      "filePath": "test_continuous_control.py",
+      "summary": "Persistent manual session regressions for native profile conversion, idle enable, immediate retargeting, fault cleanup, cancellation, and unwrapped multi-revolution feedback.",
+      "tags": [
+        "test",
+        "motion-control",
+        "fault-injection",
+        "regression"
+      ],
+      "complexity": "complex",
+      "lineRange": [
+        162,
+        450
+      ]
+    },
+    {
+      "id": "function:test_continuous_control.py:SessionTests.test_transient_wkc_during_target_ack_continues_and_restores",
+      "type": "function",
+      "name": "SessionTests.test_transient_wkc_during_target_ack_continues_and_restores",
+      "filePath": "test_continuous_control.py",
+      "summary": "Checks a transient WKC failure during continuous acknowledgement recovers without duplicate targets and leaves the bus clean after stop.",
+      "tags": [
+        "test",
+        "regression",
+        "hardware-emulation"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        163,
+        185
+      ]
+    },
+    {
+      "id": "function:test_continuous_control.py:SessionTests.assert_clean",
+      "type": "function",
+      "name": "SessionTests.assert_clean",
+      "filePath": "test_continuous_control.py",
+      "summary": "Asserts all drives are disabled, the master is closed, selected-axis parameters are restored, and unselected drives never receive motion targets.",
+      "tags": [
+        "test",
+        "regression",
+        "hardware-emulation"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        192,
+        204
+      ]
+    },
+    {
+      "id": "function:test_continuous_control.py:SessionTests.test_high_profile_and_tiny_positive_profile_use_native_parameters",
+      "type": "function",
+      "name": "SessionTests.test_high_profile_and_tiny_positive_profile_use_native_parameters",
+      "filePath": "test_continuous_control.py",
+      "summary": "Verifies large and tiny finite positive motion profiles convert to native counts with a minimum value of one and restore correctly.",
+      "tags": [
+        "test",
+        "regression",
+        "hardware-emulation"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        206,
+        220
+      ]
+    },
+    {
+      "id": "function:test_continuous_control.py:SessionTests.test_native_overflow_rejected_before_parameter_writes_or_enable",
+      "type": "function",
+      "name": "SessionTests.test_native_overflow_rejected_before_parameter_writes_or_enable",
+      "filePath": "test_continuous_control.py",
+      "summary": "Injects native 32-bit profile overflows and verifies validation rejects them before drive writes or enable while closing the master.",
+      "tags": [
+        "test",
+        "regression",
+        "hardware-emulation"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        222,
+        238
+      ]
+    },
+    {
+      "id": "function:test_continuous_control.py:SessionTests.test_enable_holds_three_axes_and_idle_stays_enabled",
+      "type": "function",
+      "name": "SessionTests.test_enable_holds_three_axes_and_idle_stays_enabled",
+      "filePath": "test_continuous_control.py",
+      "summary": "Verifies enabling holds captured positions, several absolute/relative targets execute with per-axis direction conversion, and an idle continuous session remains enabled until stop.",
+      "tags": [
+        "test",
+        "regression",
+        "hardware-emulation"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        240,
+        287
+      ]
+    },
+    {
+      "id": "function:test_continuous_control.py:SessionTests.test_stop_during_first_move_clears_later_commands",
+      "type": "function",
+      "name": "SessionTests.test_stop_during_first_move_clears_later_commands",
+      "filePath": "test_continuous_control.py",
+      "summary": "Checks stopping during a started command clears later queued targets, prevents their execution, and restores the drives.",
+      "tags": [
+        "test",
+        "regression",
+        "hardware-emulation"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        289,
+        309
+      ]
+    },
+    {
+      "id": "function:test_continuous_control.py:SessionTests.test_updates_while_moving_without_waiting_for_arrival",
+      "type": "function",
+      "name": "SessionTests.test_updates_while_moving_without_waiting_for_arrival",
+      "filePath": "test_continuous_control.py",
+      "summary": "Emulates gradual motion and verifies immediate forward/reverse retargeting supersedes older commands without disabling or waiting for arrival.",
+      "tags": [
+        "test",
+        "regression",
+        "hardware-emulation"
+      ],
+      "complexity": "complex",
+      "lineRange": [
+        311,
+        377
+      ]
+    },
+    {
+      "id": "function:test_continuous_control.py:SessionTests.test_fault_and_ack_timeout_disable_and_restore",
+      "type": "function",
+      "name": "SessionTests.test_fault_and_ack_timeout_disable_and_restore",
+      "filePath": "test_continuous_control.py",
+      "summary": "Injects communication, path, enable-state, and acknowledgement faults and checks the continuous session disables and restores selected drives.",
+      "tags": [
+        "test",
+        "regression",
+        "hardware-emulation"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        379,
+        409
+      ]
+    },
+    {
+      "id": "function:test_continuous_control.py:SessionTests.test_pre_cancel_never_enables",
+      "type": "function",
+      "name": "SessionTests.test_pre_cancel_never_enables",
+      "filePath": "test_continuous_control.py",
+      "summary": "Verifies an already-set stop token prevents any motor target or enable-triggered movement and completes cancellation cleanup.",
+      "tags": [
+        "test",
+        "regression",
+        "hardware-emulation"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        411,
+        420
+      ]
+    },
+    {
+      "id": "function:test_continuous_control.py:SessionTests.test_unlimited_travel_and_feedback_across_multiple_encoder_rollovers",
+      "type": "function",
+      "name": "SessionTests.test_unlimited_travel_and_feedback_across_multiple_encoder_rollovers",
+      "filePath": "test_continuous_control.py",
+      "summary": "Runs hundreds of relative commands across multiple signed encoder rollovers and verifies large positive/negative unwrapped feedback and final return to origin.",
+      "tags": [
+        "test",
+        "regression",
+        "hardware-emulation"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        422,
+        450
+      ]
+    },
+    {
+      "id": "file:test_platform_control.py",
+      "type": "file",
+      "name": "test_platform_control.py",
+      "filePath": "test_platform_control.py",
+      "summary": "Shared fake EtherCAT slave/master and hardware-free regressions for the legacy three-axis UDP bridge and CiA402 session. Tests cover peer ownership, sequence validation, latched disable, watchdog faults, position wrapping, and parameter restoration.",
+      "tags": [
+        "test",
+        "hardware-emulation",
+        "udp",
+        "cia402",
+        "legacy"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "class:test_platform_control.py:FakeSlave",
+      "type": "class",
+      "name": "FakeSlave",
+      "filePath": "test_platform_control.py",
+      "summary": "Emulates supported SV635N identity, SDO parameters, PDO mappings, watchdog/DC registers, and CiA402 feedback. Setpoint rising edges update wrapped encoder positions and recorded targets without physical hardware.",
+      "tags": [
+        "test",
+        "hardware-emulation",
+        "cia402",
+        "data-model"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        13,
+        66
+      ]
+    },
+    {
+      "id": "function:test_platform_control.py:FakeSlave.__init__",
+      "type": "function",
+      "name": "FakeSlave.__init__",
+      "filePath": "test_platform_control.py",
+      "summary": "Seeds supported identity, initial wrapped positions, native motion parameters, exact PDO maps, and saved originals for deterministic hardware-free tests.",
+      "tags": [
+        "test",
+        "regression",
+        "hardware-emulation"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        14,
+        34
+      ]
+    },
+    {
+      "id": "function:test_platform_control.py:FakeSlave.exchange",
+      "type": "function",
+      "name": "FakeSlave.exchange",
+      "filePath": "test_platform_control.py",
+      "summary": "Decodes output PDOs and emulates CiA402 state, acknowledgement, and arrival bits, applying a wrapped target only on a new-setpoint rising edge.",
+      "tags": [
+        "test",
+        "regression",
+        "hardware-emulation"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        52,
+        66
+      ]
+    },
+    {
+      "id": "class:test_platform_control.py:FakeMaster",
+      "type": "class",
+      "name": "FakeMaster",
+      "filePath": "test_platform_control.py",
+      "summary": "Minimal pysoem-compatible fake master holding four FakeSlave instances and expected WKC. It propagates bus states, exchanges simulated PDOs, and records close state for cleanup assertions.",
+      "tags": [
+        "test",
+        "hardware-emulation",
+        "ethercat",
+        "fixture"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        69,
+        105
+      ]
+    },
+    {
+      "id": "class:test_platform_control.py:InboxTests",
+      "type": "class",
+      "name": "InboxTests",
+      "filePath": "test_platform_control.py",
+      "summary": "Legacy UDP mailbox and bridge regressions for ordering, target validation, session rejection, heartbeat expiry, first-peer ownership, and permanent disable.",
+      "tags": [
+        "test",
+        "udp",
+        "validation",
+        "watchdog"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        108,
+        165
+      ]
+    },
+    {
+      "id": "function:test_platform_control.py:InboxTests.test_validation_and_stale_session",
+      "type": "function",
+      "name": "InboxTests.test_validation_and_stale_session",
+      "filePath": "test_platform_control.py",
+      "summary": "Rejects stale sessions and malformed, nonfinite, boolean, oversized, or out-of-bound three-axis targets without publishing a latest command.",
+      "tags": [
+        "test",
+        "regression",
+        "hardware-emulation"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        128,
+        137
+      ]
+    },
+    {
+      "id": "function:test_platform_control.py:InboxTests.test_udp_handshake_peer_and_fault",
+      "type": "function",
+      "name": "InboxTests.test_udp_handshake_peer_and_fault",
+      "filePath": "test_platform_control.py",
+      "summary": "Uses loopback sockets to verify hello establishes the peer, stranger commands are ignored, valid commands update the inbox, and invalid owned commands latch stop.",
+      "tags": [
+        "test",
+        "regression",
+        "hardware-emulation"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        147,
+        165
+      ]
+    },
+    {
+      "id": "class:test_platform_control.py:SessionTests",
+      "type": "class",
+      "name": "SessionTests",
+      "filePath": "test_platform_control.py",
+      "summary": "Legacy three-axis and single-move regression suite verifying latched stop, watchdog faults, direction/wrapping, cleanup, and restoration with an emulated master.",
+      "tags": [
+        "test",
+        "motion-control",
+        "fault-injection",
+        "regression"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        168,
+        274
+      ]
+    },
+    {
+      "id": "function:test_platform_control.py:SessionTests.test_watchdog_wkc_and_limit_fail_closed",
+      "type": "function",
+      "name": "SessionTests.test_watchdog_wkc_and_limit_fail_closed",
+      "filePath": "test_platform_control.py",
+      "summary": "Injects heartbeat expiry, WKC failure, configured travel violation, and local stop into the legacy three-axis session and verifies disable, restoration, and master close.",
+      "tags": [
+        "test",
+        "regression",
+        "hardware-emulation"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        179,
+        216
+      ]
+    },
+    {
+      "id": "function:test_platform_control.py:SessionTests.test_persistent_motion_wrap_direction_stop_and_restore",
+      "type": "function",
+      "name": "SessionTests.test_persistent_motion_wrap_direction_stop_and_restore",
+      "filePath": "test_platform_control.py",
+      "summary": "Verifies persistent three-axis targets honor per-axis direction and encoder wrapping, unchanged heartbeat targets do not restart motion, and stop restores parameters without intermediate disable cycles.",
+      "tags": [
+        "test",
+        "regression",
+        "hardware-emulation"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        218,
+        261
+      ]
+    },
+    {
+      "id": "function:test_platform_control.py:SessionTests.test_pre_cancel_never_enables",
+      "type": "function",
+      "name": "SessionTests.test_pre_cancel_never_enables",
+      "filePath": "test_platform_control.py",
+      "summary": "Verifies an already-set stop token prevents any motor target or enable-triggered movement and completes cancellation cleanup.",
+      "tags": [
+        "test",
+        "regression",
+        "hardware-emulation"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        263,
+        274
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "source": "file:test_continuous_control.py",
+      "target": "class:test_continuous_control.py:QueueTests",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:test_continuous_control.py",
+      "target": "class:test_continuous_control.py:QueueTests",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:test_continuous_control.py",
+      "target": "function:test_continuous_control.py:QueueTests.test_profile_has_no_software_upper_or_lower_range",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:test_continuous_control.py:QueueTests",
+      "target": "function:test_continuous_control.py:QueueTests.test_profile_has_no_software_upper_or_lower_range",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:test_continuous_control.py",
+      "target": "function:test_continuous_control.py:QueueTests.test_latest_relative_projection_and_atomic_rejection",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:test_continuous_control.py:QueueTests",
+      "target": "function:test_continuous_control.py:QueueTests.test_latest_relative_projection_and_atomic_rejection",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:test_continuous_control.py",
+      "target": "function:test_continuous_control.py:QueueTests.test_finiteness_latest_slot_and_closed_session",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:test_continuous_control.py:QueueTests",
+      "target": "function:test_continuous_control.py:QueueTests.test_finiteness_latest_slot_and_closed_session",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:test_continuous_control.py",
+      "target": "class:test_continuous_control.py:CommunicationTests",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:test_continuous_control.py",
+      "target": "class:test_continuous_control.py:CommunicationTests",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:test_continuous_control.py",
+      "target": "function:test_continuous_control.py:CommunicationTests.session",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:test_continuous_control.py:CommunicationTests",
+      "target": "function:test_continuous_control.py:CommunicationTests.session",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:test_continuous_control.py",
+      "target": "function:test_continuous_control.py:CommunicationTests.test_transient_timeout_and_partial_wkc_retry_without_new_target_edge",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:test_continuous_control.py:CommunicationTests",
+      "target": "function:test_continuous_control.py:CommunicationTests.test_transient_timeout_and_partial_wkc_retry_without_new_target_edge",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:test_continuous_control.py",
+      "target": "function:test_continuous_control.py:CommunicationTests.test_persistent_wkc_failure_is_bounded",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:test_continuous_control.py:CommunicationTests",
+      "target": "function:test_continuous_control.py:CommunicationTests.test_persistent_wkc_failure_is_bounded",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:test_continuous_control.py",
+      "target": "function:test_continuous_control.py:CommunicationTests.test_stop_prevents_retry_and_slow_recovery_still_stops",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:test_continuous_control.py:CommunicationTests",
+      "target": "function:test_continuous_control.py:CommunicationTests.test_stop_prevents_retry_and_slow_recovery_still_stops",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:test_continuous_control.py",
+      "target": "function:test_continuous_control.py:CommunicationTests.test_alarm_after_recovery_is_not_ignored",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:test_continuous_control.py:CommunicationTests",
+      "target": "function:test_continuous_control.py:CommunicationTests.test_alarm_after_recovery_is_not_ignored",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:test_continuous_control.py",
+      "target": "class:test_continuous_control.py:SessionTests",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:test_continuous_control.py",
+      "target": "class:test_continuous_control.py:SessionTests",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:test_continuous_control.py",
+      "target": "function:test_continuous_control.py:SessionTests.test_transient_wkc_during_target_ack_continues_and_restores",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:test_continuous_control.py:SessionTests",
+      "target": "function:test_continuous_control.py:SessionTests.test_transient_wkc_during_target_ack_continues_and_restores",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:test_continuous_control.py",
+      "target": "function:test_continuous_control.py:SessionTests.assert_clean",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:test_continuous_control.py:SessionTests",
+      "target": "function:test_continuous_control.py:SessionTests.assert_clean",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:test_continuous_control.py",
+      "target": "function:test_continuous_control.py:SessionTests.test_high_profile_and_tiny_positive_profile_use_native_parameters",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:test_continuous_control.py:SessionTests",
+      "target": "function:test_continuous_control.py:SessionTests.test_high_profile_and_tiny_positive_profile_use_native_parameters",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:test_continuous_control.py",
+      "target": "function:test_continuous_control.py:SessionTests.test_native_overflow_rejected_before_parameter_writes_or_enable",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:test_continuous_control.py:SessionTests",
+      "target": "function:test_continuous_control.py:SessionTests.test_native_overflow_rejected_before_parameter_writes_or_enable",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:test_continuous_control.py",
+      "target": "function:test_continuous_control.py:SessionTests.test_enable_holds_three_axes_and_idle_stays_enabled",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:test_continuous_control.py:SessionTests",
+      "target": "function:test_continuous_control.py:SessionTests.test_enable_holds_three_axes_and_idle_stays_enabled",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:test_continuous_control.py",
+      "target": "function:test_continuous_control.py:SessionTests.test_stop_during_first_move_clears_later_commands",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:test_continuous_control.py:SessionTests",
+      "target": "function:test_continuous_control.py:SessionTests.test_stop_during_first_move_clears_later_commands",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:test_continuous_control.py",
+      "target": "function:test_continuous_control.py:SessionTests.test_updates_while_moving_without_waiting_for_arrival",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:test_continuous_control.py:SessionTests",
+      "target": "function:test_continuous_control.py:SessionTests.test_updates_while_moving_without_waiting_for_arrival",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:test_continuous_control.py",
+      "target": "function:test_continuous_control.py:SessionTests.test_fault_and_ack_timeout_disable_and_restore",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:test_continuous_control.py:SessionTests",
+      "target": "function:test_continuous_control.py:SessionTests.test_fault_and_ack_timeout_disable_and_restore",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:test_continuous_control.py",
+      "target": "function:test_continuous_control.py:SessionTests.test_pre_cancel_never_enables",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:test_continuous_control.py:SessionTests",
+      "target": "function:test_continuous_control.py:SessionTests.test_pre_cancel_never_enables",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:test_continuous_control.py",
+      "target": "function:test_continuous_control.py:SessionTests.test_unlimited_travel_and_feedback_across_multiple_encoder_rollovers",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:test_continuous_control.py:SessionTests",
+      "target": "function:test_continuous_control.py:SessionTests.test_unlimited_travel_and_feedback_across_multiple_encoder_rollovers",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:test_continuous_control.py",
+      "target": "file:continuous_control.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:test_continuous_control.py",
+      "target": "file:core.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:test_continuous_control.py",
+      "target": "file:test_platform_control.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:test_platform_control.py",
+      "target": "class:test_platform_control.py:FakeSlave",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:test_platform_control.py",
+      "target": "class:test_platform_control.py:FakeSlave",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:test_platform_control.py",
+      "target": "function:test_platform_control.py:FakeSlave.__init__",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:test_platform_control.py:FakeSlave",
+      "target": "function:test_platform_control.py:FakeSlave.__init__",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:test_platform_control.py",
+      "target": "function:test_platform_control.py:FakeSlave.exchange",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:test_platform_control.py:FakeSlave",
+      "target": "function:test_platform_control.py:FakeSlave.exchange",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:test_platform_control.py",
+      "target": "class:test_platform_control.py:FakeMaster",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:test_platform_control.py",
+      "target": "class:test_platform_control.py:FakeMaster",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:test_platform_control.py",
+      "target": "class:test_platform_control.py:InboxTests",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:test_platform_control.py",
+      "target": "class:test_platform_control.py:InboxTests",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:test_platform_control.py",
+      "target": "function:test_platform_control.py:InboxTests.test_validation_and_stale_session",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:test_platform_control.py:InboxTests",
+      "target": "function:test_platform_control.py:InboxTests.test_validation_and_stale_session",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:test_platform_control.py",
+      "target": "function:test_platform_control.py:InboxTests.test_udp_handshake_peer_and_fault",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:test_platform_control.py:InboxTests",
+      "target": "function:test_platform_control.py:InboxTests.test_udp_handshake_peer_and_fault",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:test_platform_control.py",
+      "target": "class:test_platform_control.py:SessionTests",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:test_platform_control.py",
+      "target": "class:test_platform_control.py:SessionTests",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:test_platform_control.py",
+      "target": "function:test_platform_control.py:SessionTests.test_watchdog_wkc_and_limit_fail_closed",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:test_platform_control.py:SessionTests",
+      "target": "function:test_platform_control.py:SessionTests.test_watchdog_wkc_and_limit_fail_closed",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:test_platform_control.py",
+      "target": "function:test_platform_control.py:SessionTests.test_persistent_motion_wrap_direction_stop_and_restore",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:test_platform_control.py:SessionTests",
+      "target": "function:test_platform_control.py:SessionTests.test_persistent_motion_wrap_direction_stop_and_restore",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:test_platform_control.py",
+      "target": "function:test_platform_control.py:SessionTests.test_pre_cancel_never_enables",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:test_platform_control.py:SessionTests",
+      "target": "function:test_platform_control.py:SessionTests.test_pre_cancel_never_enables",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:test_platform_control.py",
+      "target": "file:core.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:test_platform_control.py",
+      "target": "file:platform_control.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "function:test_continuous_control.py:QueueTests.test_profile_has_no_software_upper_or_lower_range",
+      "target": "class:control_common.py:MotionQueue",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_continuous_control.py:QueueTests.test_profile_has_no_software_upper_or_lower_range",
+      "target": "class:control_common.py:Move",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_continuous_control.py:QueueTests.test_latest_relative_projection_and_atomic_rejection",
+      "target": "class:control_common.py:MotionQueue",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_continuous_control.py:QueueTests.test_finiteness_latest_slot_and_closed_session",
+      "target": "class:control_common.py:MotionQueue",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_continuous_control.py:CommunicationTests.session",
+      "target": "class:test_platform_control.py:FakeMaster",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_continuous_control.py:CommunicationTests.session",
+      "target": "class:core.py:EtherCATController",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_continuous_control.py:CommunicationTests.session",
+      "target": "function:core.py:EtherCATController._discover",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_continuous_control.py:CommunicationTests.session",
+      "target": "class:core.py:_Session",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_continuous_control.py:CommunicationTests.session",
+      "target": "class:control_common.py:Move",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_continuous_control.py:CommunicationTests.test_transient_timeout_and_partial_wkc_retry_without_new_target_edge",
+      "target": "function:test_continuous_control.py:CommunicationTests.session",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_continuous_control.py:CommunicationTests.test_transient_timeout_and_partial_wkc_retry_without_new_target_edge",
+      "target": "function:core.py:_Session.tick",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_continuous_control.py:CommunicationTests.test_persistent_wkc_failure_is_bounded",
+      "target": "function:test_continuous_control.py:CommunicationTests.session",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_continuous_control.py:CommunicationTests.test_persistent_wkc_failure_is_bounded",
+      "target": "function:core.py:_Session.tick",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_continuous_control.py:CommunicationTests.test_stop_prevents_retry_and_slow_recovery_still_stops",
+      "target": "function:test_continuous_control.py:CommunicationTests.session",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_continuous_control.py:CommunicationTests.test_stop_prevents_retry_and_slow_recovery_still_stops",
+      "target": "function:core.py:_Session.tick",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_continuous_control.py:CommunicationTests.test_alarm_after_recovery_is_not_ignored",
+      "target": "function:test_continuous_control.py:CommunicationTests.session",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_continuous_control.py:CommunicationTests.test_alarm_after_recovery_is_not_ignored",
+      "target": "function:core.py:_Session.tick",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_continuous_control.py:SessionTests.test_transient_wkc_during_target_ack_continues_and_restores",
+      "target": "class:control_common.py:MotionQueue",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_continuous_control.py:SessionTests.test_transient_wkc_during_target_ack_continues_and_restores",
+      "target": "function:continuous_control.py:run_continuous",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_continuous_control.py:SessionTests.test_transient_wkc_during_target_ack_continues_and_restores",
+      "target": "function:test_continuous_control.py:SessionTests.assert_clean",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_continuous_control.py:SessionTests.test_high_profile_and_tiny_positive_profile_use_native_parameters",
+      "target": "class:control_common.py:MotionQueue",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_continuous_control.py:SessionTests.test_high_profile_and_tiny_positive_profile_use_native_parameters",
+      "target": "function:continuous_control.py:run_continuous",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_continuous_control.py:SessionTests.test_high_profile_and_tiny_positive_profile_use_native_parameters",
+      "target": "function:test_continuous_control.py:SessionTests.assert_clean",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_continuous_control.py:SessionTests.test_native_overflow_rejected_before_parameter_writes_or_enable",
+      "target": "function:continuous_control.py:run_continuous",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_continuous_control.py:SessionTests.test_native_overflow_rejected_before_parameter_writes_or_enable",
+      "target": "class:control_common.py:MotionQueue",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_continuous_control.py:SessionTests.test_enable_holds_three_axes_and_idle_stays_enabled",
+      "target": "class:control_common.py:MotionQueue",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_continuous_control.py:SessionTests.test_enable_holds_three_axes_and_idle_stays_enabled",
+      "target": "function:continuous_control.py:run_continuous",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_continuous_control.py:SessionTests.test_enable_holds_three_axes_and_idle_stays_enabled",
+      "target": "function:test_continuous_control.py:SessionTests.assert_clean",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_continuous_control.py:SessionTests.test_stop_during_first_move_clears_later_commands",
+      "target": "class:control_common.py:MotionQueue",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_continuous_control.py:SessionTests.test_stop_during_first_move_clears_later_commands",
+      "target": "function:continuous_control.py:run_continuous",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_continuous_control.py:SessionTests.test_stop_during_first_move_clears_later_commands",
+      "target": "function:test_continuous_control.py:SessionTests.assert_clean",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_continuous_control.py:SessionTests.test_updates_while_moving_without_waiting_for_arrival",
+      "target": "class:control_common.py:MotionQueue",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_continuous_control.py:SessionTests.test_updates_while_moving_without_waiting_for_arrival",
+      "target": "function:continuous_control.py:run_continuous",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_continuous_control.py:SessionTests.test_updates_while_moving_without_waiting_for_arrival",
+      "target": "function:test_continuous_control.py:SessionTests.assert_clean",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_continuous_control.py:SessionTests.test_fault_and_ack_timeout_disable_and_restore",
+      "target": "class:control_common.py:MotionQueue",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_continuous_control.py:SessionTests.test_fault_and_ack_timeout_disable_and_restore",
+      "target": "function:continuous_control.py:run_continuous",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_continuous_control.py:SessionTests.test_fault_and_ack_timeout_disable_and_restore",
+      "target": "function:test_continuous_control.py:SessionTests.assert_clean",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_continuous_control.py:SessionTests.test_pre_cancel_never_enables",
+      "target": "class:control_common.py:MotionQueue",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_continuous_control.py:SessionTests.test_pre_cancel_never_enables",
+      "target": "function:continuous_control.py:run_continuous",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_continuous_control.py:SessionTests.test_unlimited_travel_and_feedback_across_multiple_encoder_rollovers",
+      "target": "class:control_common.py:MotionQueue",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_continuous_control.py:SessionTests.test_unlimited_travel_and_feedback_across_multiple_encoder_rollovers",
+      "target": "function:continuous_control.py:run_continuous",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_continuous_control.py:SessionTests.test_unlimited_travel_and_feedback_across_multiple_encoder_rollovers",
+      "target": "function:test_continuous_control.py:SessionTests.assert_clean",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_platform_control.py:InboxTests.test_validation_and_stale_session",
+      "target": "class:platform_control.py:CommandInbox",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_platform_control.py:InboxTests.test_validation_and_stale_session",
+      "target": "function:platform_control.py:CommandInbox.accept",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_platform_control.py:InboxTests.test_udp_handshake_peer_and_fault",
+      "target": "class:platform_control.py:CommandInbox",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_platform_control.py:InboxTests.test_udp_handshake_peer_and_fault",
+      "target": "class:platform_control.py:UDPBridge",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_platform_control.py:SessionTests.test_watchdog_wkc_and_limit_fail_closed",
+      "target": "class:test_platform_control.py:FakeMaster",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_platform_control.py:SessionTests.test_watchdog_wkc_and_limit_fail_closed",
+      "target": "class:core.py:EtherCATController",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_platform_control.py:SessionTests.test_watchdog_wkc_and_limit_fail_closed",
+      "target": "class:platform_control.py:CommandInbox",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_platform_control.py:SessionTests.test_watchdog_wkc_and_limit_fail_closed",
+      "target": "function:platform_control.py:CommandInbox.accept",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_platform_control.py:SessionTests.test_watchdog_wkc_and_limit_fail_closed",
+      "target": "class:platform_control.py:_ContinuousSession",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_platform_control.py:SessionTests.test_watchdog_wkc_and_limit_fail_closed",
+      "target": "class:control_common.py:Move",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_platform_control.py:SessionTests.test_watchdog_wkc_and_limit_fail_closed",
+      "target": "function:core.py:EtherCATController._discover",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_platform_control.py:SessionTests.test_watchdog_wkc_and_limit_fail_closed",
+      "target": "function:core.py:_Session.run",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_platform_control.py:SessionTests.test_persistent_motion_wrap_direction_stop_and_restore",
+      "target": "class:test_platform_control.py:FakeMaster",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_platform_control.py:SessionTests.test_persistent_motion_wrap_direction_stop_and_restore",
+      "target": "class:core.py:EtherCATController",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_platform_control.py:SessionTests.test_persistent_motion_wrap_direction_stop_and_restore",
+      "target": "function:core.py:EtherCATController._discover",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_platform_control.py:SessionTests.test_persistent_motion_wrap_direction_stop_and_restore",
+      "target": "class:platform_control.py:CommandInbox",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_platform_control.py:SessionTests.test_persistent_motion_wrap_direction_stop_and_restore",
+      "target": "function:platform_control.py:CommandInbox.accept",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_platform_control.py:SessionTests.test_persistent_motion_wrap_direction_stop_and_restore",
+      "target": "class:control_common.py:Move",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_platform_control.py:SessionTests.test_persistent_motion_wrap_direction_stop_and_restore",
+      "target": "class:platform_control.py:_ContinuousSession",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_platform_control.py:SessionTests.test_persistent_motion_wrap_direction_stop_and_restore",
+      "target": "function:core.py:_Session.run",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_platform_control.py:SessionTests.test_pre_cancel_never_enables",
+      "target": "class:test_platform_control.py:FakeMaster",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_platform_control.py:SessionTests.test_pre_cancel_never_enables",
+      "target": "class:core.py:EtherCATController",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_platform_control.py:SessionTests.test_pre_cancel_never_enables",
+      "target": "class:platform_control.py:CommandInbox",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_platform_control.py:SessionTests.test_pre_cancel_never_enables",
+      "target": "class:platform_control.py:_ContinuousSession",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_platform_control.py:SessionTests.test_pre_cancel_never_enables",
+      "target": "class:control_common.py:Move",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_platform_control.py:SessionTests.test_pre_cancel_never_enables",
+      "target": "function:core.py:EtherCATController._discover",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_platform_control.py:SessionTests.test_pre_cancel_never_enables",
+      "target": "function:core.py:_Session.run",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:control_common.py",
+      "target": "file:test_continuous_control.py",
+      "type": "tested_by",
+      "direction": "forward",
+      "weight": 0.5
+    }
+  ]
+}

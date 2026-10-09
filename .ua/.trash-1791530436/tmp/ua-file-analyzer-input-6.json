@@ -1,0 +1,44 @@
+{
+  "batchFiles": [
+    {
+      "path": "UE/SV635NMotionComponent.cpp",
+      "language": "cpp",
+      "sizeLines": 195,
+      "fileCategory": "code"
+    },
+    {
+      "path": "UE/SV635NMotionComponent.h",
+      "language": "c",
+      "sizeLines": 68,
+      "fileCategory": "code"
+    },
+    {
+      "path": "UdpControl/__init__.py",
+      "language": "python",
+      "sizeLines": 3,
+      "fileCategory": "code"
+    },
+    {
+      "path": "test_udp_layout.py",
+      "language": "python",
+      "sizeLines": 55,
+      "fileCategory": "code"
+    },
+    {
+      "path": "ue_demo.py",
+      "language": "python",
+      "sizeLines": 69,
+      "fileCategory": "code"
+    }
+  ],
+  "batchImportData": {
+    "UE/SV635NMotionComponent.cpp": [
+      "UE/SV635NMotionComponent.h"
+    ],
+    "UE/SV635NMotionComponent.h": [],
+    "UdpControl/__init__.py": [],
+    "test_udp_layout.py": [],
+    "ue_demo.py": []
+  },
+  "projectRoot": "M:/GitHub/SV635N/SV635N_Control"
+}

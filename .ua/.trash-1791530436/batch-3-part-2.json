@@ -1,0 +1,2403 @@
+{
+  "nodes": [
+    {
+      "id": "file:motor_service.py",
+      "type": "file",
+      "name": "motor_service.py",
+      "filePath": "motor_service.py",
+      "summary": "Coordinates asynchronous scan and enable lifecycles, immutable status snapshots and run-scoped sequenced targets/heartbeats. A single-worker executor owns hardware access, while a watchdog requests stops and schedules idle sensor reads; failures latch until an explicit scan.",
+      "tags": [
+        "service",
+        "hardware-owner",
+        "single-worker",
+        "watchdog",
+        "lifecycle"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "class:motor_service.py:MotorService",
+      "type": "class",
+      "name": "MotorService",
+      "filePath": "motor_service.py",
+      "summary": "Publishes locked lifecycle state and serializes scan, motion and cleanup on a single hardware executor, with heartbeat expiry and idle sensor monitoring.",
+      "tags": [
+        "service",
+        "hardware-owner",
+        "single-worker",
+        "watchdog"
+      ],
+      "complexity": "complex",
+      "lineRange": [
+        17,
+        279
+      ]
+    },
+    {
+      "id": "function:motor_service.py:MotorService.__init__",
+      "type": "function",
+      "name": "MotorService.__init__",
+      "filePath": "motor_service.py",
+      "summary": "Validates heartbeat timeout and initializes the hardware owner, state locks, single-worker executor and watchdog thread.",
+      "tags": [
+        "service",
+        "hardware-owner",
+        "single-worker",
+        "watchdog"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        18,
+        39
+      ]
+    },
+    {
+      "id": "function:motor_service.py:MotorService.snapshot",
+      "type": "function",
+      "name": "MotorService.snapshot",
+      "filePath": "motor_service.py",
+      "summary": "Returns a deep-copied status document including device identities, sensor configuration, planned targets, axis enable feedback and cleanup results.",
+      "tags": [
+        "service",
+        "hardware-owner",
+        "single-worker",
+        "watchdog"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        44,
+        61
+      ]
+    },
+    {
+      "id": "function:motor_service.py:MotorService.scan",
+      "type": "function",
+      "name": "MotorService.scan",
+      "filePath": "motor_service.py",
+      "summary": "Rejects busy/shutdown scans, validates the adapter, clears stale state and queues a hardware scan.",
+      "tags": [
+        "service",
+        "hardware-owner",
+        "single-worker",
+        "watchdog"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        75,
+        88
+      ]
+    },
+    {
+      "id": "function:motor_service.py:MotorService._scan",
+      "type": "function",
+      "name": "MotorService._scan",
+      "filePath": "motor_service.py",
+      "summary": "Scans and reads sensors on the hardware executor; publishes devices on success or closes hardware and latches fault on failure.",
+      "tags": [
+        "service",
+        "hardware-owner",
+        "single-worker",
+        "watchdog"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        90,
+        106
+      ]
+    },
+    {
+      "id": "function:motor_service.py:MotorService.enable",
+      "type": "function",
+      "name": "MotorService.enable",
+      "filePath": "motor_service.py",
+      "summary": "Validates selected scanned motors and motion profiles, starts a new run ID and heartbeat epoch, then queues continuous motion on the sole hardware worker.",
+      "tags": [
+        "service",
+        "hardware-owner",
+        "single-worker",
+        "watchdog"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        108,
+        132
+      ]
+    },
+    {
+      "id": "function:motor_service.py:MotorService._event",
+      "type": "function",
+      "name": "MotorService._event",
+      "filePath": "motor_service.py",
+      "summary": "Processes hardware readiness, axis/sensor telemetry, blocked-limit messages and phase updates under the service lock.",
+      "tags": [
+        "service",
+        "hardware-owner",
+        "single-worker",
+        "watchdog"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        134,
+        148
+      ]
+    },
+    {
+      "id": "function:motor_service.py:MotorService._run",
+      "type": "function",
+      "name": "MotorService._run",
+      "filePath": "motor_service.py",
+      "summary": "Runs native or injected legacy continuous control, publishes a bounded result and transitions to idle only after an intentional verified clean stop; otherwise latches fault.",
+      "tags": [
+        "service",
+        "hardware-owner",
+        "single-worker",
+        "watchdog"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        150,
+        174
+      ]
+    },
+    {
+      "id": "function:motor_service.py:MotorService.command",
+      "type": "function",
+      "name": "MotorService.command",
+      "filePath": "motor_service.py",
+      "summary": "Validates run and per-channel sequence, refuses expired heartbeats or unsafe endpoint targets, submits changed targets and refreshes heartbeat only for accepted requests.",
+      "tags": [
+        "service",
+        "hardware-owner",
+        "single-worker",
+        "watchdog"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        176,
+        223
+      ]
+    },
+    {
+      "id": "function:motor_service.py:MotorService.stop",
+      "type": "function",
+      "name": "MotorService.stop",
+      "filePath": "motor_service.py",
+      "summary": "Requests shutdown of an active run, closes its target queue and enters stopping until the hardware worker completes parameter restoration.",
+      "tags": [
+        "service",
+        "hardware-owner",
+        "single-worker",
+        "watchdog"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        225,
+        233
+      ]
+    },
+    {
+      "id": "function:motor_service.py:MotorService._watchdog",
+      "type": "function",
+      "name": "MotorService._watchdog",
+      "filePath": "motor_service.py",
+      "summary": "Requests a stop when an active heartbeat expires and schedules idle sensor reads on the existing hardware executor.",
+      "tags": [
+        "service",
+        "hardware-owner",
+        "single-worker",
+        "watchdog"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        235,
+        245
+      ]
+    },
+    {
+      "id": "function:motor_service.py:MotorService._poll_inputs",
+      "type": "function",
+      "name": "MotorService._poll_inputs",
+      "filePath": "motor_service.py",
+      "summary": "Refreshes idle input telemetry on the hardware thread and publishes unavailable states if reads fail, always clearing the pending-poll flag.",
+      "tags": [
+        "service",
+        "hardware-owner",
+        "single-worker",
+        "watchdog"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        247,
+        265
+      ]
+    },
+    {
+      "id": "function:motor_service.py:MotorService.close",
+      "type": "function",
+      "name": "MotorService.close",
+      "filePath": "motor_service.py",
+      "summary": "Stops monitoring and motion, queues hardware lifecycle closure and waits for the executor so stop/disable/restoration cannot be abandoned.",
+      "tags": [
+        "service",
+        "hardware-owner",
+        "single-worker",
+        "watchdog"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        267,
+        279
+      ]
+    },
+    {
+      "id": "file:test_aps_backend.py",
+      "type": "file",
+      "name": "test_aps_backend.py",
+      "filePath": "test_aps_backend.py",
+      "summary": "Exercises APS ABI bindings, configuration, topology and motion using a fake API with injected faults and sensor changes. Tests directional endpoint protection, stop/disable/restoration and real UDP integration, including proof that APS access stays on one hardware thread.",
+      "tags": [
+        "test",
+        "fake-hardware",
+        "safety",
+        "udp-integration",
+        "regression"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "function:test_aps_backend.py:output",
+      "type": "function",
+      "name": "output",
+      "filePath": "test_aps_backend.py",
+      "summary": "Writes a ctypes output parameter through the original pointee for fake APS API responses.",
+      "tags": [
+        "test",
+        "fake-hardware",
+        "safety",
+        "udp-integration"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        21,
+        22
+      ]
+    },
+    {
+      "id": "class:test_aps_backend.py:FakeAPS",
+      "type": "class",
+      "name": "FakeAPS",
+      "filePath": "test_aps_backend.py",
+      "summary": "Stateful fake APS API that records calls and hardware thread identities and models axes, bus state, sensor PDOs, mappings and injected motion/cleanup failures.",
+      "tags": [
+        "test",
+        "fake-hardware",
+        "safety",
+        "udp-integration"
+      ],
+      "complexity": "complex",
+      "lineRange": [
+        25,
+        158
+      ]
+    },
+    {
+      "id": "function:test_aps_backend.py:FakeAPS.__init__",
+      "type": "function",
+      "name": "FakeAPS.__init__",
+      "filePath": "test_aps_backend.py",
+      "summary": "Creates reproducible card, bus, axis, sensor and parameter state with knobs for injected faults and delayed disable feedback.",
+      "tags": [
+        "test",
+        "fake-hardware",
+        "safety",
+        "udp-integration"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        26,
+        54
+      ]
+    },
+    {
+      "id": "function:test_aps_backend.py:FakeAPS.call",
+      "type": "function",
+      "name": "FakeAPS.call",
+      "filePath": "test_aps_backend.py",
+      "summary": "Simulates APS lifecycle, topology, SDO/PDO, IO, motion and stop functions while recording calls and thread identity.",
+      "tags": [
+        "test",
+        "fake-hardware",
+        "safety",
+        "udp-integration"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        56,
+        153
+      ]
+    },
+    {
+      "id": "class:test_aps_backend.py:BindingTests",
+      "type": "class",
+      "name": "BindingTests",
+      "filePath": "test_aps_backend.py",
+      "summary": "Validates ctypes sizes/signatures, DLL load/export diagnostics and backend/APS configuration rejection rules.",
+      "tags": [
+        "test",
+        "fake-hardware",
+        "safety",
+        "udp-integration"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        161,
+        208
+      ]
+    },
+    {
+      "id": "function:test_aps_backend.py:BindingTests.test_abi_and_negative_error_diagnostic",
+      "type": "function",
+      "name": "BindingTests.test_abi_and_negative_error_diagnostic",
+      "filePath": "test_aps_backend.py",
+      "summary": "Verifies ctypes ABI sizes and signatures and the -4012 configuration diagnostic using a mocked DLL.",
+      "tags": [
+        "test",
+        "fake-hardware",
+        "safety",
+        "udp-integration"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        162,
+        178
+      ]
+    },
+    {
+      "id": "function:test_aps_backend.py:BindingTests.test_backend_config",
+      "type": "function",
+      "name": "BindingTests.test_backend_config",
+      "filePath": "test_aps_backend.py",
+      "summary": "Checks default/derived card adapter and rejects legacy adapter, invalid APS types, unit mappings and overlapping endpoint inputs.",
+      "tags": [
+        "test",
+        "fake-hardware",
+        "safety",
+        "udp-integration"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        188,
+        208
+      ]
+    },
+    {
+      "id": "class:test_aps_backend.py:ControllerTests",
+      "type": "class",
+      "name": "ControllerTests",
+      "filePath": "test_aps_backend.py",
+      "summary": "Tests fake-card scanning, axis/unit/direction conversion, endpoint interlocks, fault handling, persistent enable and complete stop/disable/restoration.",
+      "tags": [
+        "test",
+        "fake-hardware",
+        "safety",
+        "udp-integration"
+      ],
+      "complexity": "complex",
+      "lineRange": [
+        211,
+        661
+      ]
+    },
+    {
+      "id": "function:test_aps_backend.py:ControllerTests.run_motion",
+      "type": "function",
+      "name": "ControllerTests.run_motion",
+      "filePath": "test_aps_backend.py",
+      "summary": "Builds a motion queue and stop event, dispatches scripted actions after continuous readiness and collects the controller run report.",
+      "tags": [
+        "test",
+        "fake-hardware",
+        "safety",
+        "udp-integration"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        219,
+        230
+      ]
+    },
+    {
+      "id": "function:test_aps_backend.py:ControllerTests.test_mapping_gear_direction_and_moving_override",
+      "type": "function",
+      "name": "ControllerTests.test_mapping_gear_direction_and_moving_override",
+      "filePath": "test_aps_backend.py",
+      "summary": "Checks gear-scaled target and velocity conversion, reversed motor direction, moving target replacement, selected-axis ownership and cleanup restoration.",
+      "tags": [
+        "test",
+        "fake-hardware",
+        "safety",
+        "udp-integration"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        232,
+        256
+      ]
+    },
+    {
+      "id": "function:test_aps_backend.py:ControllerTests.test_sensor_bits_and_unknown_feedback",
+      "type": "function",
+      "name": "ControllerTests.test_sensor_bits_and_unknown_feedback",
+      "filePath": "test_aps_backend.py",
+      "summary": "Checks native limit/DI bit decoding, unconfigured states and unavailable feedback for incorrect PDO bit length or failed reads.",
+      "tags": [
+        "test",
+        "fake-hardware",
+        "safety",
+        "udp-integration"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        264,
+        283
+      ]
+    },
+    {
+      "id": "function:test_aps_backend.py:ControllerTests.test_bad_sensor_function_or_axis_prevents_scan",
+      "type": "function",
+      "name": "ControllerTests.test_bad_sensor_function_or_axis_prevents_scan",
+      "filePath": "test_aps_backend.py",
+      "summary": "Rejects unsupported driver DI function assignments and endpoint mappings to nonexistent APS axes.",
+      "tags": [
+        "test",
+        "fake-hardware",
+        "safety",
+        "udp-integration"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        285,
+        293
+      ]
+    },
+    {
+      "id": "function:test_aps_backend.py:ControllerTests.test_single_limit_blocks_outward_and_allows_inward_both_directions",
+      "type": "function",
+      "name": "ControllerTests.test_single_limit_blocks_outward_and_allows_inward_both_directions",
+      "filePath": "test_aps_backend.py",
+      "summary": "Checks outward rejection and permitted reverse escape for either configured native endpoint direction.",
+      "tags": [
+        "test",
+        "fake-hardware",
+        "safety",
+        "udp-integration"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        295,
+        316
+      ]
+    },
+    {
+      "id": "function:test_aps_backend.py:ControllerTests.test_dual_sensor_states_and_driver_configuration",
+      "type": "function",
+      "name": "ControllerTests.test_dual_sensor_states_and_driver_configuration",
+      "filePath": "test_aps_backend.py",
+      "summary": "Checks dual endpoint clear/trigger/conflict states, missing feedback and validation of opposite driver DI functions and axis existence.",
+      "tags": [
+        "test",
+        "fake-hardware",
+        "safety",
+        "udp-integration"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        318,
+        342
+      ]
+    },
+    {
+      "id": "function:test_aps_backend.py:ControllerTests.test_dual_limits_block_either_end_and_allow_escape_with_ui_direction_conversion",
+      "type": "function",
+      "name": "ControllerTests.test_dual_limits_block_either_end_and_allow_escape_with_ui_direction_conversion",
+      "filePath": "test_aps_backend.py",
+      "summary": "Exercises both endpoint directions, native/UI direction conversion and connected/unwired mapping settings while allowing only escape targets.",
+      "tags": [
+        "test",
+        "fake-hardware",
+        "safety",
+        "udp-integration"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        344,
+        371
+      ]
+    },
+    {
+      "id": "function:test_aps_backend.py:ControllerTests.test_both_endpoints_triggered_prevent_enable_and_fault_during_run",
+      "type": "function",
+      "name": "ControllerTests.test_both_endpoints_triggered_prevent_enable_and_fault_during_run",
+      "filePath": "test_aps_backend.py",
+      "summary": "Checks that conflicting endpoint sensors prevent servo enable and produce a fully disabled runtime fault.",
+      "tags": [
+        "test",
+        "fake-hardware",
+        "safety",
+        "udp-integration"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        373,
+        386
+      ]
+    },
+    {
+      "id": "function:test_aps_backend.py:ControllerTests.test_retraction_trigger_stops_motion_and_clearing_does_not_resume_old_target",
+      "type": "function",
+      "name": "ControllerTests.test_retraction_trigger_stops_motion_and_clearing_does_not_resume_old_target",
+      "filePath": "test_aps_backend.py",
+      "summary": "Triggers a retraction limit during motion and checks immediate stop with persistent enable and no automatic old-target restart after clearing.",
+      "tags": [
+        "test",
+        "fake-hardware",
+        "safety",
+        "udp-integration"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        388,
+        414
+      ]
+    },
+    {
+      "id": "function:test_aps_backend.py:ControllerTests.test_trigger_during_motion_stops_and_does_not_resume_on_clear",
+      "type": "function",
+      "name": "ControllerTests.test_trigger_during_motion_stops_and_does_not_resume_on_clear",
+      "filePath": "test_aps_backend.py",
+      "summary": "Checks extension-trigger stopping, no automatic restart after clearing and later acceptance of an explicit reverse target.",
+      "tags": [
+        "test",
+        "fake-hardware",
+        "safety",
+        "udp-integration"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        416,
+        446
+      ]
+    },
+    {
+      "id": "function:test_aps_backend.py:ControllerTests.test_configured_sensor_failure_prevents_enable_and_stops_run",
+      "type": "function",
+      "name": "ControllerTests.test_configured_sensor_failure_prevents_enable_and_stops_run",
+      "filePath": "test_aps_backend.py",
+      "summary": "Verifies unavailable configured endpoint feedback prevents preflight enable and faults/fully disables an already active run.",
+      "tags": [
+        "test",
+        "fake-hardware",
+        "safety",
+        "udp-integration"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        448,
+        460
+      ]
+    },
+    {
+      "id": "function:test_aps_backend.py:ControllerTests.test_native_limit_stop_allows_escape_but_other_astp_is_fault",
+      "type": "function",
+      "name": "ControllerTests.test_native_limit_stop_allows_escape_but_other_astp_is_fault",
+      "filePath": "test_aps_backend.py",
+      "summary": "Allows reverse escape after a recognized directional native limit stop but treats an unrelated abnormal stop code as a fault.",
+      "tags": [
+        "test",
+        "fake-hardware",
+        "safety",
+        "udp-integration"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        462,
+        488
+      ]
+    },
+    {
+      "id": "function:test_aps_backend.py:ControllerTests.test_arrival_keeps_servo_enabled_until_explicit_stop",
+      "type": "function",
+      "name": "ControllerTests.test_arrival_keeps_servo_enabled_until_explicit_stop",
+      "filePath": "test_aps_backend.py",
+      "summary": "Checks completed target accounting and feedback while the servo remains enabled until an explicit stop.",
+      "tags": [
+        "test",
+        "fake-hardware",
+        "safety",
+        "udp-integration"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        490,
+        511
+      ]
+    },
+    {
+      "id": "function:test_aps_backend.py:ControllerTests.test_unwired_limits_disable_only_selected_mapping_and_restore",
+      "type": "function",
+      "name": "ControllerTests.test_unwired_limits_disable_only_selected_mapping_and_restore",
+      "filePath": "test_aps_backend.py",
+      "summary": "Checks that only selected unwired limit mappings are changed and that cleanup restores their original values.",
+      "tags": [
+        "test",
+        "fake-hardware",
+        "safety",
+        "udp-integration"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        522,
+        531
+      ]
+    },
+    {
+      "id": "function:test_aps_backend.py:ControllerTests.test_unwired_emg_releases_native_input_and_restores_on_close",
+      "type": "function",
+      "name": "ControllerTests.test_unwired_emg_releases_native_input_and_restores_on_close",
+      "filePath": "test_aps_backend.py",
+      "summary": "Checks explicit unwired EMG polarity release and restoration on controller close.",
+      "tags": [
+        "test",
+        "fake-hardware",
+        "safety",
+        "udp-integration"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        549,
+        559
+      ]
+    },
+    {
+      "id": "function:test_aps_backend.py:ControllerTests.test_unwired_emg_still_active_does_not_enable",
+      "type": "function",
+      "name": "ControllerTests.test_unwired_emg_still_active_does_not_enable",
+      "filePath": "test_aps_backend.py",
+      "summary": "Checks a failed polarity release prevents any servo enable and restores the saved board setting.",
+      "tags": [
+        "test",
+        "fake-hardware",
+        "safety",
+        "udp-integration"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        561,
+        569
+      ]
+    },
+    {
+      "id": "function:test_aps_backend.py:ControllerTests.test_released_emg_historical_stop_clears_on_explicit_target",
+      "type": "function",
+      "name": "ControllerTests.test_released_emg_historical_stop_clears_on_explicit_target",
+      "filePath": "test_aps_backend.py",
+      "summary": "Checks historical stopped ASTP state after unwired EMG release permits only a new explicit motion target.",
+      "tags": [
+        "test",
+        "fake-hardware",
+        "safety",
+        "udp-integration"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        571,
+        584
+      ]
+    },
+    {
+      "id": "function:test_aps_backend.py:ControllerTests.test_runtime_faults_and_stop_fallback",
+      "type": "function",
+      "name": "ControllerTests.test_runtime_faults_and_stop_fallback",
+      "filePath": "test_aps_backend.py",
+      "summary": "Injects alarm/offline/bus/abnormal/target failures and failed deceleration stops, checking emergency-stop fallback, disable results and lifecycle invalidation.",
+      "tags": [
+        "test",
+        "fake-hardware",
+        "safety",
+        "udp-integration"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        600,
+        620
+      ]
+    },
+    {
+      "id": "function:test_aps_backend.py:ControllerTests.test_card_discovery_and_close_on_failed_start",
+      "type": "function",
+      "name": "ControllerTests.test_card_discovery_and_close_on_failed_start",
+      "filePath": "test_aps_backend.py",
+      "summary": "Checks wrong/missing card and failed bus start trigger APS closure and restoration of original board settings.",
+      "tags": [
+        "test",
+        "fake-hardware",
+        "safety",
+        "udp-integration"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        629,
+        641
+      ]
+    },
+    {
+      "id": "function:test_aps_backend.py:ControllerTests.test_boot_auto_connected_bus_and_explicit_eni_regeneration",
+      "type": "function",
+      "name": "ControllerTests.test_boot_auto_connected_bus_and_explicit_eni_regeneration",
+      "filePath": "test_aps_backend.py",
+      "summary": "Verifies a valid already-operational bus is adopted and explicit ENI regeneration orders stop, scan and start correctly.",
+      "tags": [
+        "test",
+        "fake-hardware",
+        "safety",
+        "udp-integration"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        643,
+        654
+      ]
+    },
+    {
+      "id": "class:test_aps_backend.py:APSUDPTests",
+      "type": "class",
+      "name": "APSUDPTests",
+      "filePath": "test_aps_backend.py",
+      "summary": "Exercises real UDP requests and heartbeats against a fake APS card, checking endpoint escape, conflict faults, idle sensor telemetry and one-thread hardware ownership.",
+      "tags": [
+        "test",
+        "fake-hardware",
+        "safety",
+        "udp-integration"
+      ],
+      "complexity": "complex",
+      "lineRange": [
+        664,
+        816
+      ]
+    },
+    {
+      "id": "function:test_aps_backend.py:APSUDPTests.test_udp_dual_limits_escape_each_end_and_latch_conflict",
+      "type": "function",
+      "name": "APSUDPTests.test_udp_dual_limits_escape_each_end_and_latch_conflict",
+      "filePath": "test_aps_backend.py",
+      "summary": "Exercises both endpoint escape directions over UDP and verifies simultaneous endpoint activation latches a fully disabled fault on one hardware thread.",
+      "tags": [
+        "test",
+        "fake-hardware",
+        "safety",
+        "udp-integration"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        665,
+        707
+      ]
+    },
+    {
+      "id": "function:test_aps_backend.py:APSUDPTests.test_udp_rejects_extension_at_limit_and_accepts_retraction",
+      "type": "function",
+      "name": "APSUDPTests.test_udp_rejects_extension_at_limit_and_accepts_retraction",
+      "filePath": "test_aps_backend.py",
+      "summary": "Checks unsafe endpoint UDP targets preserve target sequence and issue no move, while a reverse target is accepted with independent heartbeats.",
+      "tags": [
+        "test",
+        "fake-hardware",
+        "safety",
+        "udp-integration"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        709,
+        749
+      ]
+    },
+    {
+      "id": "function:test_aps_backend.py:APSUDPTests.test_idle_inputs_update_over_udp_without_enabling_any_motor",
+      "type": "function",
+      "name": "APSUDPTests.test_idle_inputs_update_over_udp_without_enabling_any_motor",
+      "filePath": "test_aps_backend.py",
+      "summary": "Checks idle sensor transitions and unavailable feedback propagate through UDP while no servo or trajectory call occurs.",
+      "tags": [
+        "test",
+        "fake-hardware",
+        "safety",
+        "udp-integration"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        751,
+        783
+      ]
+    },
+    {
+      "id": "function:test_aps_backend.py:APSUDPTests.test_real_udp_target_and_heartbeat_stop_with_single_hardware_thread",
+      "type": "function",
+      "name": "APSUDPTests.test_real_udp_target_and_heartbeat_stop_with_single_hardware_thread",
+      "filePath": "test_aps_backend.py",
+      "summary": "Checks scan/enable/target UDP flow, selected APS axes, heartbeat expiry stopping, single hardware-thread access and restored bus/board lifecycle.",
+      "tags": [
+        "test",
+        "fake-hardware",
+        "safety",
+        "udp-integration"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        785,
+        816
+      ]
+    },
+    {
+      "id": "file:test_udp_ui.py",
+      "type": "file",
+      "name": "test_udp_ui.py",
+      "filePath": "test_udp_ui.py",
+      "summary": "Tests the Tk UDP frontend against injected legacy hardware and a local server. Verifies selection, hidden-window heartbeats, isolated tray client launch and endpoint displays that distinguish trigger, conflict, unavailable and stale feedback.",
+      "tags": [
+        "test",
+        "gui",
+        "udp-integration",
+        "sensor-feedback"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "class:test_udp_ui.py:UITests",
+      "type": "class",
+      "name": "UITests",
+      "filePath": "test_udp_ui.py",
+      "summary": "Exercises the UDP Tk control UI and tray launch isolation with a fake EtherCAT controller, including hidden-window continuity and stale sensor rendering.",
+      "tags": [
+        "test",
+        "gui",
+        "udp-integration",
+        "sensor-feedback"
+      ],
+      "complexity": "complex",
+      "lineRange": [
+        16,
+        159
+      ]
+    },
+    {
+      "id": "function:test_udp_ui.py:UITests.test_ui_uses_udp_selection_and_hides_without_stopping",
+      "type": "function",
+      "name": "UITests.test_ui_uses_udp_selection_and_hides_without_stopping",
+      "filePath": "test_udp_ui.py",
+      "summary": "Checks UDP axis selection and target control, safe range changes, continued heartbeats while hidden, usable layout and explicit disable.",
+      "tags": [
+        "test",
+        "gui",
+        "udp-integration",
+        "sensor-feedback"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        40,
+        78
+      ]
+    },
+    {
+      "id": "function:test_udp_ui.py:UITests.test_backend_tray_launches_separate_client_without_tk",
+      "type": "function",
+      "name": "UITests.test_backend_tray_launches_separate_client_without_tk",
+      "filePath": "test_udp_ui.py",
+      "summary": "Mocks tray launch to verify a separate UdpControl process receives the actual UDP port and the backend initializes no injected hardware.",
+      "tags": [
+        "test",
+        "gui",
+        "udp-integration",
+        "sensor-feedback"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        80,
+        100
+      ]
+    },
+    {
+      "id": "function:test_udp_ui.py:UITests.test_sensor_display_distinguishes_trigger_unknown_and_no_retraction_sensor",
+      "type": "function",
+      "name": "UITests.test_sensor_display_distinguishes_trigger_unknown_and_no_retraction_sensor",
+      "filePath": "test_udp_ui.py",
+      "summary": "Checks trigger styling, raw DI display, absent retraction sensor and unavailable/stale feedback rendering.",
+      "tags": [
+        "test",
+        "gui",
+        "udp-integration",
+        "sensor-feedback"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        102,
+        127
+      ]
+    },
+    {
+      "id": "function:test_udp_ui.py:UITests.test_dual_endpoint_display_and_stale_feedback",
+      "type": "function",
+      "name": "UITests.test_dual_endpoint_display_and_stale_feedback",
+      "filePath": "test_udp_ui.py",
+      "summary": "Checks opposite endpoint labels, conflict faults and separate unavailable/stale rendering for configured retraction sensors.",
+      "tags": [
+        "test",
+        "gui",
+        "udp-integration",
+        "sensor-feedback"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        129,
+        159
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "source": "file:motor_service.py",
+      "target": "file:aps_backend.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:motor_service.py",
+      "target": "file:control_common.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:motor_service.py",
+      "target": "class:motor_service.py:MotorService",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:motor_service.py",
+      "target": "class:motor_service.py:MotorService",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:motor_service.py",
+      "target": "function:motor_service.py:MotorService.__init__",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "class:motor_service.py:MotorService",
+      "target": "function:motor_service.py:MotorService.__init__",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:motor_service.py",
+      "target": "function:motor_service.py:MotorService.snapshot",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "class:motor_service.py:MotorService",
+      "target": "function:motor_service.py:MotorService.snapshot",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:motor_service.py",
+      "target": "function:motor_service.py:MotorService.scan",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "class:motor_service.py:MotorService",
+      "target": "function:motor_service.py:MotorService.scan",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:motor_service.py",
+      "target": "function:motor_service.py:MotorService._scan",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "class:motor_service.py:MotorService",
+      "target": "function:motor_service.py:MotorService._scan",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:motor_service.py",
+      "target": "function:motor_service.py:MotorService.enable",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "class:motor_service.py:MotorService",
+      "target": "function:motor_service.py:MotorService.enable",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:motor_service.py",
+      "target": "function:motor_service.py:MotorService._event",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "class:motor_service.py:MotorService",
+      "target": "function:motor_service.py:MotorService._event",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:motor_service.py",
+      "target": "function:motor_service.py:MotorService._run",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "class:motor_service.py:MotorService",
+      "target": "function:motor_service.py:MotorService._run",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:motor_service.py",
+      "target": "function:motor_service.py:MotorService.command",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "class:motor_service.py:MotorService",
+      "target": "function:motor_service.py:MotorService.command",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:motor_service.py",
+      "target": "function:motor_service.py:MotorService.stop",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "class:motor_service.py:MotorService",
+      "target": "function:motor_service.py:MotorService.stop",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:motor_service.py",
+      "target": "function:motor_service.py:MotorService._watchdog",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "class:motor_service.py:MotorService",
+      "target": "function:motor_service.py:MotorService._watchdog",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:motor_service.py",
+      "target": "function:motor_service.py:MotorService._poll_inputs",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "class:motor_service.py:MotorService",
+      "target": "function:motor_service.py:MotorService._poll_inputs",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:motor_service.py",
+      "target": "function:motor_service.py:MotorService.close",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "class:motor_service.py:MotorService",
+      "target": "function:motor_service.py:MotorService.close",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:test_aps_backend.py",
+      "target": "file:UdpControl/client.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:test_aps_backend.py",
+      "target": "file:aps_backend.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:test_aps_backend.py",
+      "target": "file:backend.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:test_aps_backend.py",
+      "target": "file:control_common.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:test_aps_backend.py",
+      "target": "file:motor_service.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:test_aps_backend.py",
+      "target": "file:udp_server.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:test_aps_backend.py",
+      "target": "function:test_aps_backend.py:output",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:test_aps_backend.py",
+      "target": "function:test_aps_backend.py:output",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:test_aps_backend.py",
+      "target": "class:test_aps_backend.py:FakeAPS",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:test_aps_backend.py",
+      "target": "class:test_aps_backend.py:FakeAPS",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:test_aps_backend.py",
+      "target": "function:test_aps_backend.py:FakeAPS.__init__",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "class:test_aps_backend.py:FakeAPS",
+      "target": "function:test_aps_backend.py:FakeAPS.__init__",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:test_aps_backend.py",
+      "target": "function:test_aps_backend.py:FakeAPS.call",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "class:test_aps_backend.py:FakeAPS",
+      "target": "function:test_aps_backend.py:FakeAPS.call",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:test_aps_backend.py",
+      "target": "class:test_aps_backend.py:BindingTests",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:test_aps_backend.py",
+      "target": "class:test_aps_backend.py:BindingTests",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:test_aps_backend.py",
+      "target": "function:test_aps_backend.py:BindingTests.test_abi_and_negative_error_diagnostic",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "class:test_aps_backend.py:BindingTests",
+      "target": "function:test_aps_backend.py:BindingTests.test_abi_and_negative_error_diagnostic",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:test_aps_backend.py",
+      "target": "function:test_aps_backend.py:BindingTests.test_backend_config",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "class:test_aps_backend.py:BindingTests",
+      "target": "function:test_aps_backend.py:BindingTests.test_backend_config",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:test_aps_backend.py",
+      "target": "class:test_aps_backend.py:ControllerTests",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:test_aps_backend.py",
+      "target": "class:test_aps_backend.py:ControllerTests",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:test_aps_backend.py",
+      "target": "function:test_aps_backend.py:ControllerTests.run_motion",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "class:test_aps_backend.py:ControllerTests",
+      "target": "function:test_aps_backend.py:ControllerTests.run_motion",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:test_aps_backend.py",
+      "target": "function:test_aps_backend.py:ControllerTests.test_mapping_gear_direction_and_moving_override",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "class:test_aps_backend.py:ControllerTests",
+      "target": "function:test_aps_backend.py:ControllerTests.test_mapping_gear_direction_and_moving_override",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:test_aps_backend.py",
+      "target": "function:test_aps_backend.py:ControllerTests.test_sensor_bits_and_unknown_feedback",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "class:test_aps_backend.py:ControllerTests",
+      "target": "function:test_aps_backend.py:ControllerTests.test_sensor_bits_and_unknown_feedback",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:test_aps_backend.py",
+      "target": "function:test_aps_backend.py:ControllerTests.test_bad_sensor_function_or_axis_prevents_scan",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "class:test_aps_backend.py:ControllerTests",
+      "target": "function:test_aps_backend.py:ControllerTests.test_bad_sensor_function_or_axis_prevents_scan",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:test_aps_backend.py",
+      "target": "function:test_aps_backend.py:ControllerTests.test_single_limit_blocks_outward_and_allows_inward_both_directions",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "class:test_aps_backend.py:ControllerTests",
+      "target": "function:test_aps_backend.py:ControllerTests.test_single_limit_blocks_outward_and_allows_inward_both_directions",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:test_aps_backend.py",
+      "target": "function:test_aps_backend.py:ControllerTests.test_dual_sensor_states_and_driver_configuration",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "class:test_aps_backend.py:ControllerTests",
+      "target": "function:test_aps_backend.py:ControllerTests.test_dual_sensor_states_and_driver_configuration",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:test_aps_backend.py",
+      "target": "function:test_aps_backend.py:ControllerTests.test_dual_limits_block_either_end_and_allow_escape_with_ui_direction_conversion",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "class:test_aps_backend.py:ControllerTests",
+      "target": "function:test_aps_backend.py:ControllerTests.test_dual_limits_block_either_end_and_allow_escape_with_ui_direction_conversion",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:test_aps_backend.py",
+      "target": "function:test_aps_backend.py:ControllerTests.test_both_endpoints_triggered_prevent_enable_and_fault_during_run",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "class:test_aps_backend.py:ControllerTests",
+      "target": "function:test_aps_backend.py:ControllerTests.test_both_endpoints_triggered_prevent_enable_and_fault_during_run",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:test_aps_backend.py",
+      "target": "function:test_aps_backend.py:ControllerTests.test_retraction_trigger_stops_motion_and_clearing_does_not_resume_old_target",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "class:test_aps_backend.py:ControllerTests",
+      "target": "function:test_aps_backend.py:ControllerTests.test_retraction_trigger_stops_motion_and_clearing_does_not_resume_old_target",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:test_aps_backend.py",
+      "target": "function:test_aps_backend.py:ControllerTests.test_trigger_during_motion_stops_and_does_not_resume_on_clear",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "class:test_aps_backend.py:ControllerTests",
+      "target": "function:test_aps_backend.py:ControllerTests.test_trigger_during_motion_stops_and_does_not_resume_on_clear",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:test_aps_backend.py",
+      "target": "function:test_aps_backend.py:ControllerTests.test_configured_sensor_failure_prevents_enable_and_stops_run",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "class:test_aps_backend.py:ControllerTests",
+      "target": "function:test_aps_backend.py:ControllerTests.test_configured_sensor_failure_prevents_enable_and_stops_run",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:test_aps_backend.py",
+      "target": "function:test_aps_backend.py:ControllerTests.test_native_limit_stop_allows_escape_but_other_astp_is_fault",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "class:test_aps_backend.py:ControllerTests",
+      "target": "function:test_aps_backend.py:ControllerTests.test_native_limit_stop_allows_escape_but_other_astp_is_fault",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:test_aps_backend.py",
+      "target": "function:test_aps_backend.py:ControllerTests.test_arrival_keeps_servo_enabled_until_explicit_stop",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "class:test_aps_backend.py:ControllerTests",
+      "target": "function:test_aps_backend.py:ControllerTests.test_arrival_keeps_servo_enabled_until_explicit_stop",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:test_aps_backend.py",
+      "target": "function:test_aps_backend.py:ControllerTests.test_unwired_limits_disable_only_selected_mapping_and_restore",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "class:test_aps_backend.py:ControllerTests",
+      "target": "function:test_aps_backend.py:ControllerTests.test_unwired_limits_disable_only_selected_mapping_and_restore",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:test_aps_backend.py",
+      "target": "function:test_aps_backend.py:ControllerTests.test_unwired_emg_releases_native_input_and_restores_on_close",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "class:test_aps_backend.py:ControllerTests",
+      "target": "function:test_aps_backend.py:ControllerTests.test_unwired_emg_releases_native_input_and_restores_on_close",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:test_aps_backend.py",
+      "target": "function:test_aps_backend.py:ControllerTests.test_unwired_emg_still_active_does_not_enable",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "class:test_aps_backend.py:ControllerTests",
+      "target": "function:test_aps_backend.py:ControllerTests.test_unwired_emg_still_active_does_not_enable",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:test_aps_backend.py",
+      "target": "function:test_aps_backend.py:ControllerTests.test_released_emg_historical_stop_clears_on_explicit_target",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "class:test_aps_backend.py:ControllerTests",
+      "target": "function:test_aps_backend.py:ControllerTests.test_released_emg_historical_stop_clears_on_explicit_target",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:test_aps_backend.py",
+      "target": "function:test_aps_backend.py:ControllerTests.test_runtime_faults_and_stop_fallback",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "class:test_aps_backend.py:ControllerTests",
+      "target": "function:test_aps_backend.py:ControllerTests.test_runtime_faults_and_stop_fallback",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:test_aps_backend.py",
+      "target": "function:test_aps_backend.py:ControllerTests.test_card_discovery_and_close_on_failed_start",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "class:test_aps_backend.py:ControllerTests",
+      "target": "function:test_aps_backend.py:ControllerTests.test_card_discovery_and_close_on_failed_start",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:test_aps_backend.py",
+      "target": "function:test_aps_backend.py:ControllerTests.test_boot_auto_connected_bus_and_explicit_eni_regeneration",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "class:test_aps_backend.py:ControllerTests",
+      "target": "function:test_aps_backend.py:ControllerTests.test_boot_auto_connected_bus_and_explicit_eni_regeneration",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:test_aps_backend.py",
+      "target": "class:test_aps_backend.py:APSUDPTests",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:test_aps_backend.py",
+      "target": "class:test_aps_backend.py:APSUDPTests",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:test_aps_backend.py",
+      "target": "function:test_aps_backend.py:APSUDPTests.test_udp_dual_limits_escape_each_end_and_latch_conflict",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "class:test_aps_backend.py:APSUDPTests",
+      "target": "function:test_aps_backend.py:APSUDPTests.test_udp_dual_limits_escape_each_end_and_latch_conflict",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:test_aps_backend.py",
+      "target": "function:test_aps_backend.py:APSUDPTests.test_udp_rejects_extension_at_limit_and_accepts_retraction",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "class:test_aps_backend.py:APSUDPTests",
+      "target": "function:test_aps_backend.py:APSUDPTests.test_udp_rejects_extension_at_limit_and_accepts_retraction",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:test_aps_backend.py",
+      "target": "function:test_aps_backend.py:APSUDPTests.test_idle_inputs_update_over_udp_without_enabling_any_motor",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "class:test_aps_backend.py:APSUDPTests",
+      "target": "function:test_aps_backend.py:APSUDPTests.test_idle_inputs_update_over_udp_without_enabling_any_motor",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:test_aps_backend.py",
+      "target": "function:test_aps_backend.py:APSUDPTests.test_real_udp_target_and_heartbeat_stop_with_single_hardware_thread",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "class:test_aps_backend.py:APSUDPTests",
+      "target": "function:test_aps_backend.py:APSUDPTests.test_real_udp_target_and_heartbeat_stop_with_single_hardware_thread",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:test_udp_ui.py",
+      "target": "file:UdpControl/debug_ui.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:test_udp_ui.py",
+      "target": "file:backend.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:test_udp_ui.py",
+      "target": "file:core.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:test_udp_ui.py",
+      "target": "file:motor_service.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:test_udp_ui.py",
+      "target": "file:test_platform_control.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:test_udp_ui.py",
+      "target": "file:udp_server.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:test_udp_ui.py",
+      "target": "class:test_udp_ui.py:UITests",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:test_udp_ui.py",
+      "target": "class:test_udp_ui.py:UITests",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:test_udp_ui.py",
+      "target": "function:test_udp_ui.py:UITests.test_ui_uses_udp_selection_and_hides_without_stopping",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "class:test_udp_ui.py:UITests",
+      "target": "function:test_udp_ui.py:UITests.test_ui_uses_udp_selection_and_hides_without_stopping",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:test_udp_ui.py",
+      "target": "function:test_udp_ui.py:UITests.test_backend_tray_launches_separate_client_without_tk",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "class:test_udp_ui.py:UITests",
+      "target": "function:test_udp_ui.py:UITests.test_backend_tray_launches_separate_client_without_tk",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:test_udp_ui.py",
+      "target": "function:test_udp_ui.py:UITests.test_sensor_display_distinguishes_trigger_unknown_and_no_retraction_sensor",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "class:test_udp_ui.py:UITests",
+      "target": "function:test_udp_ui.py:UITests.test_sensor_display_distinguishes_trigger_unknown_and_no_retraction_sensor",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "file:test_udp_ui.py",
+      "target": "function:test_udp_ui.py:UITests.test_dual_endpoint_display_and_stale_feedback",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "class:test_udp_ui.py:UITests",
+      "target": "function:test_udp_ui.py:UITests.test_dual_endpoint_display_and_stale_feedback",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1
+    },
+    {
+      "source": "function:motor_service.py:MotorService.__init__",
+      "target": "class:aps_backend.py:PCIe8332Controller",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:motor_service.py:MotorService.scan",
+      "target": "class:control_common.py:ControlError",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:motor_service.py:MotorService._scan",
+      "target": "function:aps_backend.py:PCIe8332Controller.read_inputs",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:motor_service.py:MotorService._scan",
+      "target": "function:aps_backend.py:PCIe8332Controller.close",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:motor_service.py:MotorService.enable",
+      "target": "class:control_common.py:ControlError",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:motor_service.py:MotorService.enable",
+      "target": "class:control_common.py:MotionQueue",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:motor_service.py:MotorService._run",
+      "target": "function:aps_backend.py:PCIe8332Controller.run_continuous",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:motor_service.py:MotorService.command",
+      "target": "class:control_common.py:ControlError",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:motor_service.py:MotorService.command",
+      "target": "function:motor_service.py:MotorService.stop",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:motor_service.py:MotorService.command",
+      "target": "function:control_common.py:MotionQueue.submit",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:motor_service.py:MotorService._watchdog",
+      "target": "function:motor_service.py:MotorService.stop",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:motor_service.py:MotorService._poll_inputs",
+      "target": "function:aps_backend.py:PCIe8332Controller.read_inputs",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:motor_service.py:MotorService.close",
+      "target": "function:motor_service.py:MotorService.stop",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:motor_service.py:MotorService.close",
+      "target": "function:aps_backend.py:PCIe8332Controller.close",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:FakeAPS.call",
+      "target": "function:test_aps_backend.py:output",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:FakeAPS.call",
+      "target": "class:control_common.py:ControlError",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:BindingTests.test_abi_and_negative_error_diagnostic",
+      "target": "class:aps_backend.py:APSLibrary",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:BindingTests.test_abi_and_negative_error_diagnostic",
+      "target": "function:aps_backend.py:APSLibrary.call",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:BindingTests.test_backend_config",
+      "target": "function:backend.py:load_config",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:BindingTests.test_backend_config",
+      "target": "function:aps_backend.py:validate_options",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:ControllerTests.run_motion",
+      "target": "function:aps_backend.py:PCIe8332Controller.scan",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:ControllerTests.run_motion",
+      "target": "class:control_common.py:MotionQueue",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:ControllerTests.run_motion",
+      "target": "function:aps_backend.py:PCIe8332Controller.run_continuous",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:ControllerTests.test_mapping_gear_direction_and_moving_override",
+      "target": "function:control_common.py:MotionQueue.submit",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:ControllerTests.test_mapping_gear_direction_and_moving_override",
+      "target": "function:test_aps_backend.py:ControllerTests.run_motion",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:ControllerTests.test_sensor_bits_and_unknown_feedback",
+      "target": "function:aps_backend.py:PCIe8332Controller.scan",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:ControllerTests.test_sensor_bits_and_unknown_feedback",
+      "target": "function:aps_backend.py:PCIe8332Controller.read_inputs",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:ControllerTests.test_bad_sensor_function_or_axis_prevents_scan",
+      "target": "function:aps_backend.py:PCIe8332Controller.scan",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:ControllerTests.test_single_limit_blocks_outward_and_allows_inward_both_directions",
+      "target": "function:control_common.py:MotionQueue.submit",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:ControllerTests.test_single_limit_blocks_outward_and_allows_inward_both_directions",
+      "target": "function:test_aps_backend.py:ControllerTests.run_motion",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:ControllerTests.test_dual_sensor_states_and_driver_configuration",
+      "target": "function:aps_backend.py:PCIe8332Controller.scan",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:ControllerTests.test_dual_sensor_states_and_driver_configuration",
+      "target": "function:aps_backend.py:PCIe8332Controller.read_inputs",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:ControllerTests.test_dual_limits_block_either_end_and_allow_escape_with_ui_direction_conversion",
+      "target": "function:control_common.py:MotionQueue.submit",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:ControllerTests.test_dual_limits_block_either_end_and_allow_escape_with_ui_direction_conversion",
+      "target": "function:test_aps_backend.py:ControllerTests.run_motion",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:ControllerTests.test_both_endpoints_triggered_prevent_enable_and_fault_during_run",
+      "target": "function:test_aps_backend.py:ControllerTests.run_motion",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:ControllerTests.test_retraction_trigger_stops_motion_and_clearing_does_not_resume_old_target",
+      "target": "function:control_common.py:MotionQueue.submit",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:ControllerTests.test_retraction_trigger_stops_motion_and_clearing_does_not_resume_old_target",
+      "target": "function:test_aps_backend.py:ControllerTests.run_motion",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:ControllerTests.test_trigger_during_motion_stops_and_does_not_resume_on_clear",
+      "target": "function:control_common.py:MotionQueue.submit",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:ControllerTests.test_trigger_during_motion_stops_and_does_not_resume_on_clear",
+      "target": "function:test_aps_backend.py:ControllerTests.run_motion",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:ControllerTests.test_configured_sensor_failure_prevents_enable_and_stops_run",
+      "target": "function:test_aps_backend.py:ControllerTests.run_motion",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:ControllerTests.test_native_limit_stop_allows_escape_but_other_astp_is_fault",
+      "target": "function:control_common.py:MotionQueue.submit",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:ControllerTests.test_native_limit_stop_allows_escape_but_other_astp_is_fault",
+      "target": "function:test_aps_backend.py:ControllerTests.run_motion",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:ControllerTests.test_arrival_keeps_servo_enabled_until_explicit_stop",
+      "target": "function:control_common.py:MotionQueue.submit",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:ControllerTests.test_arrival_keeps_servo_enabled_until_explicit_stop",
+      "target": "function:test_aps_backend.py:ControllerTests.run_motion",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:ControllerTests.test_unwired_limits_disable_only_selected_mapping_and_restore",
+      "target": "function:test_aps_backend.py:ControllerTests.run_motion",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:ControllerTests.test_unwired_emg_releases_native_input_and_restores_on_close",
+      "target": "function:test_aps_backend.py:ControllerTests.run_motion",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:ControllerTests.test_unwired_emg_releases_native_input_and_restores_on_close",
+      "target": "function:aps_backend.py:PCIe8332Controller.close",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:ControllerTests.test_unwired_emg_still_active_does_not_enable",
+      "target": "function:aps_backend.py:PCIe8332Controller.scan",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:ControllerTests.test_released_emg_historical_stop_clears_on_explicit_target",
+      "target": "function:control_common.py:MotionQueue.submit",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:ControllerTests.test_released_emg_historical_stop_clears_on_explicit_target",
+      "target": "function:test_aps_backend.py:ControllerTests.run_motion",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:ControllerTests.test_runtime_faults_and_stop_fallback",
+      "target": "class:test_aps_backend.py:FakeAPS",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:ControllerTests.test_runtime_faults_and_stop_fallback",
+      "target": "function:control_common.py:MotionQueue.submit",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:ControllerTests.test_runtime_faults_and_stop_fallback",
+      "target": "function:test_aps_backend.py:ControllerTests.run_motion",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:ControllerTests.test_card_discovery_and_close_on_failed_start",
+      "target": "class:test_aps_backend.py:FakeAPS",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:ControllerTests.test_card_discovery_and_close_on_failed_start",
+      "target": "function:aps_backend.py:PCIe8332Controller.scan",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:ControllerTests.test_boot_auto_connected_bus_and_explicit_eni_regeneration",
+      "target": "function:aps_backend.py:PCIe8332Controller.scan",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:ControllerTests.test_boot_auto_connected_bus_and_explicit_eni_regeneration",
+      "target": "function:aps_backend.py:PCIe8332Controller.close",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:APSUDPTests.test_udp_dual_limits_escape_each_end_and_latch_conflict",
+      "target": "class:test_aps_backend.py:FakeAPS",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:APSUDPTests.test_udp_dual_limits_escape_each_end_and_latch_conflict",
+      "target": "class:motor_service.py:MotorService",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:APSUDPTests.test_udp_dual_limits_escape_each_end_and_latch_conflict",
+      "target": "class:udp_server.py:UDPServer",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:APSUDPTests.test_udp_dual_limits_escape_each_end_and_latch_conflict",
+      "target": "function:udp_server.py:UDPServer.close",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:APSUDPTests.test_udp_dual_limits_escape_each_end_and_latch_conflict",
+      "target": "function:motor_service.py:MotorService.close",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:APSUDPTests.test_udp_rejects_extension_at_limit_and_accepts_retraction",
+      "target": "class:test_aps_backend.py:FakeAPS",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:APSUDPTests.test_udp_rejects_extension_at_limit_and_accepts_retraction",
+      "target": "class:motor_service.py:MotorService",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:APSUDPTests.test_udp_rejects_extension_at_limit_and_accepts_retraction",
+      "target": "class:udp_server.py:UDPServer",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:APSUDPTests.test_udp_rejects_extension_at_limit_and_accepts_retraction",
+      "target": "function:udp_server.py:UDPServer.close",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:APSUDPTests.test_udp_rejects_extension_at_limit_and_accepts_retraction",
+      "target": "function:motor_service.py:MotorService.close",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:APSUDPTests.test_idle_inputs_update_over_udp_without_enabling_any_motor",
+      "target": "class:test_aps_backend.py:FakeAPS",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:APSUDPTests.test_idle_inputs_update_over_udp_without_enabling_any_motor",
+      "target": "class:motor_service.py:MotorService",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:APSUDPTests.test_idle_inputs_update_over_udp_without_enabling_any_motor",
+      "target": "class:udp_server.py:UDPServer",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:APSUDPTests.test_idle_inputs_update_over_udp_without_enabling_any_motor",
+      "target": "function:udp_server.py:UDPServer.close",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:APSUDPTests.test_idle_inputs_update_over_udp_without_enabling_any_motor",
+      "target": "function:motor_service.py:MotorService.close",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:APSUDPTests.test_real_udp_target_and_heartbeat_stop_with_single_hardware_thread",
+      "target": "class:test_aps_backend.py:FakeAPS",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:APSUDPTests.test_real_udp_target_and_heartbeat_stop_with_single_hardware_thread",
+      "target": "class:motor_service.py:MotorService",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:APSUDPTests.test_real_udp_target_and_heartbeat_stop_with_single_hardware_thread",
+      "target": "class:udp_server.py:UDPServer",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:APSUDPTests.test_real_udp_target_and_heartbeat_stop_with_single_hardware_thread",
+      "target": "function:udp_server.py:UDPServer.close",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_aps_backend.py:APSUDPTests.test_real_udp_target_and_heartbeat_stop_with_single_hardware_thread",
+      "target": "function:motor_service.py:MotorService.close",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_udp_ui.py:UITests.test_ui_uses_udp_selection_and_hides_without_stopping",
+      "target": "function:motor_service.py:MotorService.snapshot",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_udp_ui.py:UITests.test_backend_tray_launches_separate_client_without_tk",
+      "target": "function:backend.py:run_tray",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:motor_service.py:MotorService.scan",
+      "target": "function:motor_service.py:MotorService._scan",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "function:motor_service.py:MotorService.enable",
+      "target": "function:motor_service.py:MotorService._run",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "function:motor_service.py:MotorService._watchdog",
+      "target": "function:motor_service.py:MotorService._poll_inputs",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "function:motor_service.py:MotorService._scan",
+      "target": "function:aps_backend.py:PCIe8332Controller.scan",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:motor_service.py",
+      "target": "file:test_aps_backend.py",
+      "type": "tested_by",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "file:motor_service.py",
+      "target": "file:test_udp_ui.py",
+      "type": "tested_by",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "class:test_aps_backend.py:APSUDPTests",
+      "target": "class:UdpControl/client.py:MotorClient",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "class:test_udp_ui.py:UITests",
+      "target": "class:UdpControl/debug_ui.py:DebugWindow",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "class:test_udp_ui.py:UITests",
+      "target": "class:core.py:EtherCATController",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    },
+    {
+      "source": "class:test_udp_ui.py:UITests",
+      "target": "class:test_platform_control.py:FakeMaster",
+      "type": "depends_on",
+      "direction": "forward",
+      "weight": 0.6
+    }
+  ]
+}

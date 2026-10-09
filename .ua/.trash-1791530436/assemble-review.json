@@ -1,0 +1,18 @@
+{
+  "fixedSectionOk": true,
+  "nodesRecovered": 0,
+  "edgesRestored": 0,
+  "crossBatchEdgesAdded": 3,
+  "typesRemapped": 0,
+  "complexityRemapped": 0,
+  "notes": [
+    "Merged fragments needed no ID/type/complexity normalization or dropped-item recovery.",
+    "All 43 scanned files have exactly one file-level node; 272 nodes and 938 edges have unique IDs/keys and valid endpoints.",
+    "All 48 imports exactly match the authoritative scanner importMap; no import edges were recovered or added.",
+    "Added two verified runtime depends_on edges and one cross-batch calls edge for MotorService lazy-imported injected legacy-controller branches; these remain distinct from scanner imports.",
+    "Cross-batch calls target verified project symbols, including control_common reexports used by legacy modules.",
+    "Function/class source ranges and symbol presence were checked; Python method positions were supplemented read-only because bundled extraction supplied method names without ranges.",
+    "UE header class correctly contains owner-qualified method definitions from the C++ implementation; legacy UE messages are incompatible with current v1 UDPServer.",
+    "The merger appended tested tags to covered production files; nine such file nodes consequently have six tags. This is documented merge metadata, not an unresolved semantic issue."
+  ]
+}

@@ -1,0 +1,81 @@
+{
+  "batchFiles": [
+    {
+      "path": "aps_backend.py",
+      "language": "python",
+      "sizeLines": 695,
+      "fileCategory": "code"
+    },
+    {
+      "path": "backend.py",
+      "language": "python",
+      "sizeLines": 123,
+      "fileCategory": "code"
+    },
+    {
+      "path": "control_common.py",
+      "language": "python",
+      "sizeLines": 194,
+      "fileCategory": "code"
+    },
+    {
+      "path": "motor_service.py",
+      "language": "python",
+      "sizeLines": 279,
+      "fileCategory": "code"
+    },
+    {
+      "path": "test_aps_backend.py",
+      "language": "python",
+      "sizeLines": 820,
+      "fileCategory": "code"
+    },
+    {
+      "path": "test_udp_ui.py",
+      "language": "python",
+      "sizeLines": 163,
+      "fileCategory": "code"
+    },
+    {
+      "path": "udp_server.py",
+      "language": "python",
+      "sizeLines": 207,
+      "fileCategory": "code"
+    }
+  ],
+  "projectRoot": "M:/GitHub/SV635N/SV635N_Control",
+  "batchImportData": {
+    "aps_backend.py": [
+      "control_common.py"
+    ],
+    "backend.py": [
+      "aps_backend.py",
+      "motor_service.py",
+      "udp_server.py"
+    ],
+    "control_common.py": [],
+    "motor_service.py": [
+      "aps_backend.py",
+      "control_common.py"
+    ],
+    "test_aps_backend.py": [
+      "UdpControl/client.py",
+      "aps_backend.py",
+      "backend.py",
+      "control_common.py",
+      "motor_service.py",
+      "udp_server.py"
+    ],
+    "test_udp_ui.py": [
+      "UdpControl/debug_ui.py",
+      "backend.py",
+      "core.py",
+      "motor_service.py",
+      "test_platform_control.py",
+      "udp_server.py"
+    ],
+    "udp_server.py": [
+      "control_common.py"
+    ]
+  }
+}

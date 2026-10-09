@@ -1,0 +1,799 @@
+{
+  "nodes": [
+    {
+      "id": "file:platform_control.py",
+      "type": "file",
+      "name": "platform_control.py",
+      "filePath": "platform_control.py",
+      "summary": "Legacy UDP bridge for three motor-angle targets and a persistent pysoem session, using hello/state and session/seq/enable/targets_deg messages. This older UE protocol is incompatible with the current versioned UDPServer API.",
+      "tags": [
+        "legacy",
+        "udp",
+        "ue-integration",
+        "motion-control",
+        "state-machine"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "function:platform_control.py:run_three_axis",
+      "type": "function",
+      "name": "run_three_axis",
+      "filePath": "platform_control.py",
+      "summary": "Validates exactly three ordered distinct motors, configures the legacy target mailbox and UDP bridge, and runs a locked persistent session with combined feedback callbacks.",
+      "tags": [
+        "entry-point",
+        "legacy",
+        "ue-integration",
+        "udp"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        249,
+        279
+      ]
+    },
+    {
+      "id": "class:platform_control.py:CommandInbox",
+      "type": "class",
+      "name": "CommandInbox",
+      "filePath": "platform_control.py",
+      "summary": "Thread-safe latest-target mailbox for the legacy three-axis protocol, validating session, sequence, finite bounded targets, and heartbeat freshness. Authenticated disable permanently latches the stop condition even when packets arrive out of order.",
+      "tags": [
+        "udp",
+        "validation",
+        "latest-target",
+        "watchdog"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        17,
+        75
+      ]
+    },
+    {
+      "id": "function:platform_control.py:CommandInbox.__init__",
+      "type": "function",
+      "name": "CommandInbox.__init__",
+      "filePath": "platform_control.py",
+      "summary": "Validates target bounds and heartbeat timeout and allocates a unique legacy protocol session, synchronization lock, latest slot, and latched stop event.",
+      "tags": [
+        "udp",
+        "validation",
+        "legacy"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        19,
+        31
+      ]
+    },
+    {
+      "id": "function:platform_control.py:CommandInbox.accept",
+      "type": "function",
+      "name": "CommandInbox.accept",
+      "filePath": "platform_control.py",
+      "summary": "Authenticates the session and validates sequence, boolean enable, and exactly three finite bounded targets; newer targets replace the slot while disable latches permanently.",
+      "tags": [
+        "udp",
+        "validation",
+        "legacy"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        39,
+        62
+      ]
+    },
+    {
+      "id": "class:platform_control.py:UDPBridge",
+      "type": "class",
+      "name": "UDPBridge",
+      "filePath": "platform_control.py",
+      "summary": "Background JSON/UDP transport for the legacy UE protocol that binds the first hello sender to the session and publishes state snapshots. Malformed traffic is ignored while accepted command errors and socket failures latch the mailbox stop.",
+      "tags": [
+        "udp",
+        "ue-integration",
+        "legacy",
+        "transport"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        78,
+        169
+      ]
+    },
+    {
+      "id": "function:platform_control.py:UDPBridge.__enter__",
+      "type": "function",
+      "name": "UDPBridge.__enter__",
+      "filePath": "platform_control.py",
+      "summary": "Binds the UDP socket and starts a daemon receive thread, closing the socket if transport startup fails.",
+      "tags": [
+        "udp",
+        "validation",
+        "legacy"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        89,
+        99
+      ]
+    },
+    {
+      "id": "function:platform_control.py:UDPBridge.publish",
+      "type": "function",
+      "name": "UDPBridge.publish",
+      "filePath": "platform_control.py",
+      "summary": "Updates synchronized feedback from phase/status/result events, including selected axes and verified disabled state after cleanup.",
+      "tags": [
+        "udp",
+        "validation",
+        "legacy"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        106,
+        118
+      ]
+    },
+    {
+      "id": "function:platform_control.py:UDPBridge._receive_loop",
+      "type": "function",
+      "name": "UDPBridge._receive_loop",
+      "filePath": "platform_control.py",
+      "summary": "Handles bounded JSON packets from the first hello peer, accepts legacy commands, and sends periodic state responses while latching authenticated-command or transport failures.",
+      "tags": [
+        "udp",
+        "validation",
+        "legacy"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        136,
+        169
+      ]
+    },
+    {
+      "id": "class:platform_control.py:_ContinuousSession",
+      "type": "class",
+      "name": "_ContinuousSession",
+      "filePath": "platform_control.py",
+      "summary": "Legacy three-axis _Session subclass that waits for an authenticated target before enabling, then applies latest absolute motor-angle targets. It retains enabled state between updates and enforces heartbeat, drive-state, and configured travel limits.",
+      "tags": [
+        "legacy",
+        "ue-integration",
+        "state-machine",
+        "watchdog"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        172,
+        246
+      ]
+    },
+    {
+      "id": "function:platform_control.py:_ContinuousSession.motion",
+      "type": "function",
+      "name": "_ContinuousSession.motion",
+      "filePath": "platform_control.py",
+      "summary": "Waits for a fresh legacy target before enabling, captures origins, and exchanges immediate absolute three-axis PP setpoints through acknowledgement/reset states.",
+      "tags": [
+        "ethercat",
+        "motion-control",
+        "state-machine"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        196,
+        246
+      ]
+    },
+    {
+      "id": "file:test_app_continuous.py",
+      "type": "file",
+      "name": "test_app_continuous.py",
+      "filePath": "test_app_continuous.py",
+      "summary": "Tk flow regressions using the real local continuous session with an emulated EtherCAT master. They cover target editing, relative updates, live sliders, cancellation, single-move compatibility, and disabling after stop.",
+      "tags": [
+        "test",
+        "tkinter",
+        "manual-control",
+        "regression",
+        "hardware-emulation"
+      ],
+      "complexity": "moderate"
+    },
+    {
+      "id": "class:test_app_continuous.py:AppTests",
+      "type": "class",
+      "name": "AppTests",
+      "filePath": "test_app_continuous.py",
+      "summary": "Tk integration tests using patched discovery and a fake master to exercise persistent enable, target editing, slider updates, cancellation, and single-move behavior.",
+      "tags": [
+        "test",
+        "tkinter",
+        "integration",
+        "hardware-emulation"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        13,
+        187
+      ]
+    },
+    {
+      "id": "function:test_app_continuous.py:AppTests.setUp",
+      "type": "function",
+      "name": "AppTests.setUp",
+      "filePath": "test_app_continuous.py",
+      "summary": "Patches adapter discovery and local control, creates a Tk window with fake devices, and marks three selected motors ready for UI tests.",
+      "tags": [
+        "test",
+        "regression",
+        "hardware-emulation"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        14,
+        32
+      ]
+    },
+    {
+      "id": "function:test_app_continuous.py:AppTests.test_edit_targets_relative_origin_and_disable",
+      "type": "function",
+      "name": "AppTests.test_edit_targets_relative_origin_and_disable",
+      "filePath": "test_app_continuous.py",
+      "summary": "Exercises target cell editing, relative updates, return-to-origin, idle enable, and queue clearing plus disable after switching continuous control off.",
+      "tags": [
+        "test",
+        "regression",
+        "hardware-emulation"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        59,
+        98
+      ]
+    },
+    {
+      "id": "function:test_app_continuous.py:AppTests.test_single_motion_keeps_its_original_behavior",
+      "type": "function",
+      "name": "AppTests.test_single_motion_keeps_its_original_behavior",
+      "filePath": "test_app_continuous.py",
+      "summary": "Verifies a GUI single move still triggers once per selected axis and finishes with motors disabled and continuous mode inactive.",
+      "tags": [
+        "test",
+        "regression",
+        "hardware-emulation"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        110,
+        121
+      ]
+    },
+    {
+      "id": "function:test_app_continuous.py:AppTests.test_live_slider_controls_checked_motors_and_range_changes_do_not_move",
+      "type": "function",
+      "name": "AppTests.test_live_slider_controls_checked_motors_and_range_changes_do_not_move",
+      "filePath": "test_app_continuous.py",
+      "summary": "Verifies live slider updates reach only selected axes, display range changes submit no motion, large offsets work, and stop blocks later updates.",
+      "tags": [
+        "test",
+        "regression",
+        "hardware-emulation"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        123,
+        152
+      ]
+    },
+    {
+      "id": "function:test_app_continuous.py:AppTests.test_slider_selection_change_and_mixed_targets_do_not_send",
+      "type": "function",
+      "name": "AppTests.test_slider_selection_change_and_mixed_targets_do_not_send",
+      "filePath": "test_app_continuous.py",
+      "summary": "Checks that changing selection or synchronizing mixed target displays does not submit motion, while user slider changes set a common controlled target.",
+      "tags": [
+        "test",
+        "regression",
+        "hardware-emulation"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        154,
+        173
+      ]
+    },
+    {
+      "id": "function:test_app_continuous.py:AppTests.test_disabled_slider_only_edits_target",
+      "type": "function",
+      "name": "AppTests.test_disabled_slider_only_edits_target",
+      "filePath": "test_app_continuous.py",
+      "summary": "Checks slider changes while disabled only edit targets, continuous enable begins at zero without commands, and later slider motion succeeds.",
+      "tags": [
+        "test",
+        "regression",
+        "hardware-emulation"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        175,
+        187
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "source": "file:platform_control.py",
+      "target": "function:platform_control.py:run_three_axis",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:platform_control.py",
+      "target": "function:platform_control.py:run_three_axis",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:platform_control.py",
+      "target": "class:platform_control.py:CommandInbox",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:platform_control.py",
+      "target": "class:platform_control.py:CommandInbox",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:platform_control.py",
+      "target": "function:platform_control.py:CommandInbox.__init__",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:platform_control.py:CommandInbox",
+      "target": "function:platform_control.py:CommandInbox.__init__",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:platform_control.py",
+      "target": "function:platform_control.py:CommandInbox.accept",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:platform_control.py:CommandInbox",
+      "target": "function:platform_control.py:CommandInbox.accept",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:platform_control.py",
+      "target": "class:platform_control.py:UDPBridge",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:platform_control.py",
+      "target": "class:platform_control.py:UDPBridge",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:platform_control.py",
+      "target": "function:platform_control.py:UDPBridge.__enter__",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:platform_control.py:UDPBridge",
+      "target": "function:platform_control.py:UDPBridge.__enter__",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:platform_control.py",
+      "target": "function:platform_control.py:UDPBridge.publish",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:platform_control.py:UDPBridge",
+      "target": "function:platform_control.py:UDPBridge.publish",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:platform_control.py",
+      "target": "function:platform_control.py:UDPBridge._receive_loop",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:platform_control.py:UDPBridge",
+      "target": "function:platform_control.py:UDPBridge._receive_loop",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:platform_control.py",
+      "target": "class:platform_control.py:_ContinuousSession",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:platform_control.py",
+      "target": "class:platform_control.py:_ContinuousSession",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:platform_control.py",
+      "target": "function:platform_control.py:_ContinuousSession.motion",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:platform_control.py:_ContinuousSession",
+      "target": "function:platform_control.py:_ContinuousSession.motion",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:platform_control.py",
+      "target": "file:core.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:test_app_continuous.py",
+      "target": "class:test_app_continuous.py:AppTests",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:test_app_continuous.py",
+      "target": "class:test_app_continuous.py:AppTests",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:test_app_continuous.py",
+      "target": "function:test_app_continuous.py:AppTests.setUp",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:test_app_continuous.py:AppTests",
+      "target": "function:test_app_continuous.py:AppTests.setUp",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:test_app_continuous.py",
+      "target": "function:test_app_continuous.py:AppTests.test_edit_targets_relative_origin_and_disable",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:test_app_continuous.py:AppTests",
+      "target": "function:test_app_continuous.py:AppTests.test_edit_targets_relative_origin_and_disable",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:test_app_continuous.py",
+      "target": "function:test_app_continuous.py:AppTests.test_single_motion_keeps_its_original_behavior",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:test_app_continuous.py:AppTests",
+      "target": "function:test_app_continuous.py:AppTests.test_single_motion_keeps_its_original_behavior",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:test_app_continuous.py",
+      "target": "function:test_app_continuous.py:AppTests.test_live_slider_controls_checked_motors_and_range_changes_do_not_move",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:test_app_continuous.py:AppTests",
+      "target": "function:test_app_continuous.py:AppTests.test_live_slider_controls_checked_motors_and_range_changes_do_not_move",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:test_app_continuous.py",
+      "target": "function:test_app_continuous.py:AppTests.test_slider_selection_change_and_mixed_targets_do_not_send",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:test_app_continuous.py:AppTests",
+      "target": "function:test_app_continuous.py:AppTests.test_slider_selection_change_and_mixed_targets_do_not_send",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:test_app_continuous.py",
+      "target": "function:test_app_continuous.py:AppTests.test_disabled_slider_only_edits_target",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:test_app_continuous.py:AppTests",
+      "target": "function:test_app_continuous.py:AppTests.test_disabled_slider_only_edits_target",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:test_app_continuous.py",
+      "target": "file:app.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:test_app_continuous.py",
+      "target": "file:continuous_control.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:test_app_continuous.py",
+      "target": "file:core.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:test_app_continuous.py",
+      "target": "file:test_platform_control.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "class:platform_control.py:_ContinuousSession",
+      "target": "class:core.py:_Session",
+      "type": "inherits",
+      "direction": "forward",
+      "weight": 0.9
+    },
+    {
+      "source": "file:platform_control.py",
+      "target": "file:test_platform_control.py",
+      "type": "tested_by",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "function:platform_control.py:UDPBridge._receive_loop",
+      "target": "function:platform_control.py:CommandInbox.accept",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:platform_control.py:_ContinuousSession.motion",
+      "target": "function:core.py:_Session.tick",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:platform_control.py:_ContinuousSession.motion",
+      "target": "function:core.py:displacement",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:platform_control.py:run_three_axis",
+      "target": "class:platform_control.py:CommandInbox",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:platform_control.py:run_three_axis",
+      "target": "class:control_common.py:Move",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:platform_control.py:run_three_axis",
+      "target": "function:control_common.py:adapter_lock",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:platform_control.py:run_three_axis",
+      "target": "class:platform_control.py:UDPBridge",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:platform_control.py:run_three_axis",
+      "target": "class:platform_control.py:_ContinuousSession",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:platform_control.py:run_three_axis",
+      "target": "function:core.py:_Session.run",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:platform_control.py:run_three_axis",
+      "target": "function:platform_control.py:UDPBridge.publish",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_app_continuous.py:AppTests.setUp",
+      "target": "class:test_platform_control.py:FakeMaster",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_app_continuous.py:AppTests.setUp",
+      "target": "class:core.py:EtherCATController",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_app_continuous.py:AppTests.setUp",
+      "target": "class:app.py:App",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_app_continuous.py:AppTests.setUp",
+      "target": "function:core.py:EtherCATController._discover",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_app_continuous.py:AppTests.test_edit_targets_relative_origin_and_disable",
+      "target": "function:app.py:App.toggle",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_app_continuous.py:AppTests.test_edit_targets_relative_origin_and_disable",
+      "target": "function:app.py:App.edit_target",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_app_continuous.py:AppTests.test_edit_targets_relative_origin_and_disable",
+      "target": "function:app.py:App.send_targets",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_app_continuous.py:AppTests.test_edit_targets_relative_origin_and_disable",
+      "target": "function:app.py:App.run_motion",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_app_continuous.py:AppTests.test_edit_targets_relative_origin_and_disable",
+      "target": "function:app.py:App.toggle_continuous",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_app_continuous.py:AppTests.test_single_motion_keeps_its_original_behavior",
+      "target": "function:app.py:App.run_motion",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_app_continuous.py:AppTests.test_live_slider_controls_checked_motors_and_range_changes_do_not_move",
+      "target": "function:app.py:App.sync_slider",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_app_continuous.py:AppTests.test_live_slider_controls_checked_motors_and_range_changes_do_not_move",
+      "target": "function:app.py:App.apply_slider_range",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_app_continuous.py:AppTests.test_live_slider_controls_checked_motors_and_range_changes_do_not_move",
+      "target": "function:app.py:App.stop",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_app_continuous.py:AppTests.test_live_slider_controls_checked_motors_and_range_changes_do_not_move",
+      "target": "function:app.py:App.slider_changed",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_app_continuous.py:AppTests.test_slider_selection_change_and_mixed_targets_do_not_send",
+      "target": "function:app.py:App.send_targets",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:test_app_continuous.py:AppTests.test_slider_selection_change_and_mixed_targets_do_not_send",
+      "target": "function:app.py:App.sync_slider",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    }
+  ]
+}

@@ -1,0 +1,1044 @@
+{
+  "nodes": [
+    {
+      "id": "file:app.py",
+      "type": "file",
+      "name": "app.py",
+      "filePath": "app.py",
+      "summary": "Legacy Tk desktop frontend for direct-NIC pysoem control, device selection, dry runs, single moves, and persistent manual target updates. A single worker owns EtherCAT while queued events update the interface and cooperative stop controls cleanup.",
+      "tags": [
+        "legacy",
+        "entry-point",
+        "tkinter",
+        "manual-control",
+        "event-handler"
+      ],
+      "complexity": "complex"
+    },
+    {
+      "id": "function:app.py:data_folder",
+      "type": "function",
+      "name": "data_folder",
+      "filePath": "app.py",
+      "summary": "Chooses a writable settings/log directory next to the script or frozen executable, falling back to LOCALAPPDATA after a write probe fails.",
+      "tags": [
+        "utility",
+        "filesystem",
+        "configuration"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        19,
+        31
+      ]
+    },
+    {
+      "id": "class:app.py:App",
+      "type": "class",
+      "name": "App",
+      "filePath": "app.py",
+      "summary": "Tk desktop controller that manages motor selection, target editors, sliders, and asynchronous legacy EtherCAT operations. It serializes hardware work and consumes queued progress, status, and final reports.",
+      "tags": [
+        "component",
+        "tkinter",
+        "manual-control",
+        "event-handler"
+      ],
+      "complexity": "complex",
+      "lineRange": [
+        34,
+        702
+      ]
+    },
+    {
+      "id": "function:app.py:App.__init__",
+      "type": "function",
+      "name": "App.__init__",
+      "filePath": "app.py",
+      "summary": "Initializes the Tk window, persisted adapter settings, single hardware executor, event queue, target state, and polling callbacks.",
+      "tags": [
+        "event-handler",
+        "tkinter",
+        "manual-control"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        35,
+        83
+      ]
+    },
+    {
+      "id": "function:app.py:App._style",
+      "type": "function",
+      "name": "App._style",
+      "filePath": "app.py",
+      "summary": "Defines Tk widget typography, colors, selected rows, and distinct run/stop button styles.",
+      "tags": [
+        "event-handler",
+        "tkinter",
+        "manual-control"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        85,
+        100
+      ]
+    },
+    {
+      "id": "function:app.py:App._layout",
+      "type": "function",
+      "name": "App._layout",
+      "filePath": "app.py",
+      "summary": "Builds adapter discovery, motor selection, motion profiles, target sliders, continuous-enable controls, and log widgets with event bindings.",
+      "tags": [
+        "event-handler",
+        "tkinter",
+        "manual-control"
+      ],
+      "complexity": "complex",
+      "lineRange": [
+        102,
+        216
+      ]
+    },
+    {
+      "id": "function:app.py:App.update_summary",
+      "type": "function",
+      "name": "App.update_summary",
+      "filePath": "app.py",
+      "summary": "Validates the displayed profile and describes signed single-move duration or immediate relative retargeting behavior.",
+      "tags": [
+        "event-handler",
+        "tkinter",
+        "manual-control"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        224,
+        239
+      ]
+    },
+    {
+      "id": "function:app.py:App.update_buttons",
+      "type": "function",
+      "name": "App.update_buttons",
+      "filePath": "app.py",
+      "summary": "Derives widget availability from selection, busy state, acknowledged continuous readiness, and cooperative stop state.",
+      "tags": [
+        "event-handler",
+        "tkinter",
+        "manual-control"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        241,
+        264
+      ]
+    },
+    {
+      "id": "function:app.py:App.refresh_adapters",
+      "type": "function",
+      "name": "App.refresh_adapters",
+      "filePath": "app.py",
+      "summary": "Enumerates pysoem adapters, selects the saved or first adapter, and updates discovery status and available actions.",
+      "tags": [
+        "event-handler",
+        "tkinter",
+        "manual-control"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        266,
+        284
+      ]
+    },
+    {
+      "id": "function:app.py:App.adapter_changed",
+      "type": "function",
+      "name": "App.adapter_changed",
+      "filePath": "app.py",
+      "summary": "Clears discovered devices, selection, targets, and readiness when the chosen adapter changes, then refreshes the controls.",
+      "tags": [
+        "event-handler",
+        "tkinter",
+        "manual-control"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        292,
+        301
+      ]
+    },
+    {
+      "id": "function:app.py:App.submit",
+      "type": "function",
+      "name": "App.submit",
+      "filePath": "app.py",
+      "summary": "Schedules one hardware operation on the single worker, replaces its stop token, and reports success or failure through the GUI event queue.",
+      "tags": [
+        "event-handler",
+        "tkinter",
+        "manual-control"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        303,
+        316
+      ]
+    },
+    {
+      "id": "function:app.py:App.scan",
+      "type": "function",
+      "name": "App.scan",
+      "filePath": "app.py",
+      "summary": "Persists the selected adapter, clears stale device state, and schedules an asynchronous scan that leaves motors disabled.",
+      "tags": [
+        "event-handler",
+        "tkinter",
+        "manual-control"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        318,
+        336
+      ]
+    },
+    {
+      "id": "function:app.py:App.toggle",
+      "type": "function",
+      "name": "App.toggle",
+      "filePath": "app.py",
+      "summary": "Toggles a motor row selection while rejecting unsupported motor parameters and changes during active hardware operations.",
+      "tags": [
+        "event-handler",
+        "tkinter",
+        "manual-control"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        338,
+        355
+      ]
+    },
+    {
+      "id": "function:app.py:App.run_motion",
+      "type": "function",
+      "name": "App.run_motion",
+      "filePath": "app.py",
+      "summary": "Validates selected-axis motion parameters and submits a dry run or bounded single move; ready continuous sessions instead receive relative retargets.",
+      "tags": [
+        "event-handler",
+        "tkinter",
+        "manual-control"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        373,
+        401
+      ]
+    },
+    {
+      "id": "function:app.py:App.toggle_continuous",
+      "type": "function",
+      "name": "App.toggle_continuous",
+      "filePath": "app.py",
+      "summary": "Creates a validated latest-target queue and starts persistent local control, or requests stop when continuous enable is turned off.",
+      "tags": [
+        "event-handler",
+        "tkinter",
+        "manual-control"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        403,
+        435
+      ]
+    },
+    {
+      "id": "function:app.py:App.sync_slider",
+      "type": "function",
+      "name": "App.sync_slider",
+      "filePath": "app.py",
+      "summary": "Synchronizes the slider with selected target offsets, optionally recenters its display, and suppresses callbacks during programmatic changes.",
+      "tags": [
+        "event-handler",
+        "tkinter",
+        "manual-control"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        442,
+        468
+      ]
+    },
+    {
+      "id": "function:app.py:App.apply_slider_range",
+      "type": "function",
+      "name": "App.apply_slider_range",
+      "filePath": "app.py",
+      "summary": "Validates finite slider center and span, then changes the display range while suppressing target submission.",
+      "tags": [
+        "event-handler",
+        "tkinter",
+        "manual-control"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        470,
+        486
+      ]
+    },
+    {
+      "id": "function:app.py:App.slider_changed",
+      "type": "function",
+      "name": "App.slider_changed",
+      "filePath": "app.py",
+      "summary": "Applies a finite shared target to selected axes, submitting only changed targets in a ready continuous session and otherwise editing display values.",
+      "tags": [
+        "event-handler",
+        "tkinter",
+        "manual-control"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        488,
+        514
+      ]
+    },
+    {
+      "id": "function:app.py:App.edit_target",
+      "type": "function",
+      "name": "App.edit_target",
+      "filePath": "app.py",
+      "summary": "Places an entry editor over a motor target cell and binds commit/cancel events while preserving selection state.",
+      "tags": [
+        "event-handler",
+        "tkinter",
+        "manual-control"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        516,
+        535
+      ]
+    },
+    {
+      "id": "function:app.py:App.queue_relative",
+      "type": "function",
+      "name": "App.queue_relative",
+      "filePath": "app.py",
+      "summary": "Validates a signed incremental angle, atomically updates all controlled targets relative to the planned position, and refreshes target displays.",
+      "tags": [
+        "event-handler",
+        "tkinter",
+        "manual-control"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        554,
+        566
+      ]
+    },
+    {
+      "id": "function:app.py:App.send_targets",
+      "type": "function",
+      "name": "App.send_targets",
+      "filePath": "app.py",
+      "summary": "Commits target edits and submits per-axis absolute offsets, or submits zeros to return to the captured enable origin.",
+      "tags": [
+        "event-handler",
+        "tkinter",
+        "manual-control"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        568,
+        577
+      ]
+    },
+    {
+      "id": "function:app.py:App.stop",
+      "type": "function",
+      "name": "App.stop",
+      "filePath": "app.py",
+      "summary": "Sets the worker stop event, closes the command queue, cancels target editing, and disables controls pending hardware cleanup.",
+      "tags": [
+        "event-handler",
+        "tkinter",
+        "manual-control"
+      ],
+      "complexity": "simple",
+      "lineRange": [
+        579,
+        590
+      ]
+    },
+    {
+      "id": "function:app.py:App.poll",
+      "type": "function",
+      "name": "App.poll",
+      "filePath": "app.py",
+      "summary": "Consumes queued phase, readiness, command, status, and completion events to update the Tk interface. It guards late readiness after stop and waits for safe completion before closing.",
+      "tags": [
+        "event-handler",
+        "tkinter",
+        "manual-control"
+      ],
+      "complexity": "complex",
+      "lineRange": [
+        592,
+        686
+      ]
+    },
+    {
+      "id": "file:cli.py",
+      "type": "file",
+      "name": "cli.py",
+      "filePath": "cli.py",
+      "summary": "Optional legacy command-line frontend that scans a dedicated EtherCAT adapter and selects motors by unique drive aliases. It verifies communication without enabling by default; --run requests a bounded relative move.",
+      "tags": [
+        "legacy",
+        "entry-point",
+        "cli",
+        "dry-run",
+        "ethercat"
+      ],
+      "complexity": "simple"
+    },
+    {
+      "id": "function:cli.py:main",
+      "type": "function",
+      "name": "main",
+      "filePath": "cli.py",
+      "summary": "Parses legacy direct-NIC motion options, scans and matches unique drive aliases, installs cooperative Ctrl-C stop, and returns the single-session report with dry-run default.",
+      "tags": [
+        "entry-point",
+        "cli",
+        "legacy"
+      ],
+      "complexity": "moderate",
+      "lineRange": [
+        10,
+        35
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "source": "file:app.py",
+      "target": "function:app.py:data_folder",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:app.py",
+      "target": "function:app.py:data_folder",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:app.py",
+      "target": "class:app.py:App",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:app.py",
+      "target": "class:app.py:App",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:app.py",
+      "target": "function:app.py:App.__init__",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:app.py:App",
+      "target": "function:app.py:App.__init__",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:app.py",
+      "target": "function:app.py:App._style",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:app.py:App",
+      "target": "function:app.py:App._style",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:app.py",
+      "target": "function:app.py:App._layout",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:app.py:App",
+      "target": "function:app.py:App._layout",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:app.py",
+      "target": "function:app.py:App.update_summary",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:app.py:App",
+      "target": "function:app.py:App.update_summary",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:app.py",
+      "target": "function:app.py:App.update_buttons",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:app.py:App",
+      "target": "function:app.py:App.update_buttons",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:app.py",
+      "target": "function:app.py:App.refresh_adapters",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:app.py:App",
+      "target": "function:app.py:App.refresh_adapters",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:app.py",
+      "target": "function:app.py:App.adapter_changed",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:app.py:App",
+      "target": "function:app.py:App.adapter_changed",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:app.py",
+      "target": "function:app.py:App.submit",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:app.py:App",
+      "target": "function:app.py:App.submit",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:app.py",
+      "target": "function:app.py:App.scan",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:app.py:App",
+      "target": "function:app.py:App.scan",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:app.py",
+      "target": "function:app.py:App.toggle",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:app.py:App",
+      "target": "function:app.py:App.toggle",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:app.py",
+      "target": "function:app.py:App.run_motion",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:app.py:App",
+      "target": "function:app.py:App.run_motion",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:app.py",
+      "target": "function:app.py:App.toggle_continuous",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:app.py:App",
+      "target": "function:app.py:App.toggle_continuous",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:app.py",
+      "target": "function:app.py:App.sync_slider",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:app.py:App",
+      "target": "function:app.py:App.sync_slider",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:app.py",
+      "target": "function:app.py:App.apply_slider_range",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:app.py:App",
+      "target": "function:app.py:App.apply_slider_range",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:app.py",
+      "target": "function:app.py:App.slider_changed",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:app.py:App",
+      "target": "function:app.py:App.slider_changed",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:app.py",
+      "target": "function:app.py:App.edit_target",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:app.py:App",
+      "target": "function:app.py:App.edit_target",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:app.py",
+      "target": "function:app.py:App.queue_relative",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:app.py:App",
+      "target": "function:app.py:App.queue_relative",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:app.py",
+      "target": "function:app.py:App.send_targets",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:app.py:App",
+      "target": "function:app.py:App.send_targets",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:app.py",
+      "target": "function:app.py:App.stop",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:app.py:App",
+      "target": "function:app.py:App.stop",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:app.py",
+      "target": "function:app.py:App.poll",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "class:app.py:App",
+      "target": "function:app.py:App.poll",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:app.py",
+      "target": "file:continuous_control.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:app.py",
+      "target": "file:core.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:cli.py",
+      "target": "function:cli.py:main",
+      "type": "contains",
+      "direction": "forward",
+      "weight": 1.0
+    },
+    {
+      "source": "file:cli.py",
+      "target": "function:cli.py:main",
+      "type": "exports",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "file:cli.py",
+      "target": "file:core.py",
+      "type": "imports",
+      "direction": "forward",
+      "weight": 0.7
+    },
+    {
+      "source": "file:app.py",
+      "target": "file:test_app_continuous.py",
+      "type": "tested_by",
+      "direction": "forward",
+      "weight": 0.5
+    },
+    {
+      "source": "function:app.py:App.__init__",
+      "target": "function:app.py:data_folder",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:app.py:App.__init__",
+      "target": "function:app.py:App._style",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:app.py:App.__init__",
+      "target": "function:app.py:App._layout",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:app.py:App.__init__",
+      "target": "function:app.py:App.update_summary",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:app.py:App.__init__",
+      "target": "function:app.py:App.refresh_adapters",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:app.py:App.__init__",
+      "target": "function:app.py:App.stop",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:app.py:App._layout",
+      "target": "function:app.py:App.sync_slider",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:app.py:App._layout",
+      "target": "function:app.py:App.run_motion",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:app.py:App._layout",
+      "target": "function:app.py:App.send_targets",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:app.py:App.update_summary",
+      "target": "class:control_common.py:Move",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:app.py:App.refresh_adapters",
+      "target": "function:app.py:App.update_buttons",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:app.py:App.adapter_changed",
+      "target": "function:app.py:App.sync_slider",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:app.py:App.adapter_changed",
+      "target": "function:app.py:App.update_buttons",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:app.py:App.submit",
+      "target": "function:app.py:App.update_buttons",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:app.py:App.scan",
+      "target": "class:core.py:EtherCATController",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:app.py:App.scan",
+      "target": "function:app.py:App.sync_slider",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:app.py:App.scan",
+      "target": "function:app.py:App.submit",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:app.py:App.run_motion",
+      "target": "function:app.py:App.queue_relative",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:app.py:App.run_motion",
+      "target": "class:control_common.py:Move",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:app.py:App.run_motion",
+      "target": "class:core.py:EtherCATController",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:app.py:App.run_motion",
+      "target": "function:app.py:App.submit",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:app.py:App.run_motion",
+      "target": "function:core.py:EtherCATController.execute",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:app.py:App.toggle_continuous",
+      "target": "function:app.py:App.stop",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:app.py:App.toggle_continuous",
+      "target": "class:control_common.py:MotionQueue",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:app.py:App.toggle_continuous",
+      "target": "class:core.py:EtherCATController",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:app.py:App.toggle_continuous",
+      "target": "function:app.py:App.sync_slider",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:app.py:App.toggle_continuous",
+      "target": "function:app.py:App.update_summary",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:app.py:App.toggle_continuous",
+      "target": "function:app.py:App.submit",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:app.py:App.toggle_continuous",
+      "target": "function:continuous_control.py:run_continuous",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:app.py:App.slider_changed",
+      "target": "function:app.py:App.sync_slider",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:app.py:App.queue_relative",
+      "target": "class:control_common.py:Move",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:app.py:App.stop",
+      "target": "function:app.py:App.update_buttons",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:app.py:App.poll",
+      "target": "function:app.py:App.update_buttons",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:app.py:App.poll",
+      "target": "function:app.py:App.update_summary",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:cli.py:main",
+      "target": "class:core.py:EtherCATController",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:cli.py:main",
+      "target": "function:core.py:EtherCATController.scan",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:cli.py:main",
+      "target": "function:core.py:EtherCATController.execute",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    },
+    {
+      "source": "function:cli.py:main",
+      "target": "class:control_common.py:Move",
+      "type": "calls",
+      "direction": "forward",
+      "weight": 0.8
+    }
+  ]
+}
