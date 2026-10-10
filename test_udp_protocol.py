@@ -123,15 +123,51 @@ class ProtocolTests(unittest.TestCase):
             self.assertNotEqual(old_token,client.session)
             self.assertNotEqual(old['server_id'],client.server_id)
             self.assertEqual(client.state['message'],'restarted')
+            replacement._send(dict(type='shutdown',v=1,server_id=old['server_id']),client.sock.getsockname())
             replacement._send(dict(type='state',v=1,server_id=old['server_id'],state_serial=99999,
                                    state=dict(phase='fault',message='stale')),client.sock.getsockname())
             time.sleep(.05)
             self.assertEqual(client.state['message'],'restarted')
+            self.assertFalse(client.backend_exiting.is_set())
         finally:
             client.close()
             self.server.close()
             if replacement:
                 replacement.close()
+
+    def test_shutdown_notifies_owner_and_read_only_client_even_if_first_packet_is_lost(self):
+        self.server.owner=self.server.token=None
+        self.server.clients.clear()
+        self.server.start()
+        original=self.server._send
+        dropped=set()
+        def lose_first_shutdown(packet,peer):
+            if packet.get('type')=='shutdown' and peer not in dropped:
+                dropped.add(peer)
+                return
+            original(packet,peer)
+        self.server._send=lose_first_shutdown
+        try:
+            with MotorClient(port=self.server.port) as owner, MotorClient(port=self.server.port) as observer:
+                owner.hello()
+                observer.hello(claim=False)
+                self.server.close()
+                self.assertTrue(owner.backend_exiting.wait(1))
+                self.assertTrue(observer.backend_exiting.wait(1))
+                self.assertEqual(len(dropped),2)
+                self.assertIsNone(owner.session)
+                with self.assertRaisesRegex(UDPError,'正在退出'):
+                    owner.request('enable',orders=[1])
+        finally:
+            self.server.close()
+
+    def test_failed_auth_is_not_registered_for_shutdown_and_peer_list_is_bounded(self):
+        secured=UDPServer(self.service,auth_key='key',port=0)
+        self.assertFalse(secured.handle(dict(v=1,type='status',id='h'),self.peer)['ok'])
+        self.assertFalse(secured.clients)
+        for n in range(300):
+            secured.handle(dict(v=1,type='status',id=str(n),auth_key='key'),('127.0.0.1',1000+n))
+        self.assertEqual(len(secured.clients),256)
 
 
 if __name__=='__main__':

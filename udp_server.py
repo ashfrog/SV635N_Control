@@ -32,6 +32,20 @@ def decode(data):
 LOG = logging.getLogger(__name__)
 
 
+def bind_socket(host, port):
+    """Reserve the endpoint before creating any hardware service."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        if hasattr(socket, 'SO_EXCLUSIVEADDRUSE'):
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        sock.bind((host, port))
+        sock.settimeout(.02)
+        return sock
+    except Exception:
+        sock.close()
+        raise
+
+
 class UDPServer:
     def __init__(self, service, host='127.0.0.1', port=5005, auth_key='', lease_seconds=5):
         if host not in ('127.0.0.1', 'localhost') and not auth_key:
@@ -43,19 +57,17 @@ class UDPServer:
         self.control_sequence = -1
         self.released = None
         self.cache = OrderedDict()
+        self.clients = OrderedDict()
+        self.stopping = threading.Event()
         self.closed = threading.Event()
         self.state_serial = 0
         self.server_id = secrets.token_hex(16)
         self.sock = None
 
-    def start(self):
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    def start(self, sock=None):
+        self.sock = sock if sock is not None else bind_socket(self.host, self.port)
         try:
-            if hasattr(socket, 'SO_EXCLUSIVEADDRUSE'):
-                self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
-            self.sock.bind((self.host, self.port))
             self.port = self.sock.getsockname()[1]
-            self.sock.settimeout(.02)
             self.thread = threading.Thread(target=self._receive, name='Motor-UDP', daemon=True)
             self.thread.start()
         except Exception:
@@ -78,12 +90,20 @@ class UDPServer:
         self.state_serial += 1
         return dict(state=state, state_serial=self.state_serial, server_id=self.server_id)
 
+    def _remember_client(self, peer):
+        self.clients.pop(peer, None)
+        self.clients[peer] = time.monotonic()
+        while len(self.clients) > 256:
+            self.clients.popitem(last=False)
+
     def handle(self, packet, peer):
         with self.lock:
             self._expire()
             request_id = packet.get('id')
             response = dict(type='ack', v=PROTOCOL_VERSION, id=request_id, ok=False)
             try:
+                if self.stopping.is_set():
+                    raise ControlError('后台正在退出。')
                 if not isinstance(request_id, str) or not 1 <= len(request_id) <= 64:
                     raise ControlError('id 必须为 1～64 字符的请求标识。')
                 if packet.get('v') != PROTOCOL_VERSION or type(packet.get('v')) is not int:
@@ -126,6 +146,7 @@ class UDPServer:
                             raise ControlError('control_seq 必须严格递增；过期控制请求不能再次执行。')
                         self.control_sequence = seq
                     self.last_seen = time.monotonic()
+                    self._remember_client(peer)
                     if kind == 'adapters':
                         response['adapters'] = self.service.adapters()
                     elif kind == 'scan':
@@ -163,6 +184,7 @@ class UDPServer:
                     while len(self.cache) > 256:
                         self.cache.popitem(last=False)
                     return response
+                self._remember_client(peer)
                 response.update(ok=True, **self._state())
             except (ControlError, ValueError, TypeError, OverflowError) as exc:
                 response['error'] = str(exc)
@@ -202,9 +224,27 @@ class UDPServer:
                 self.service.stop('UDP 接收服务异常')
             self.closed.set()
 
+    def notify_shutdown(self):
+        with self.lock:
+            if self.stopping.is_set():
+                return
+            self.stopping.set()
+            peers = [peer for peer, seen in self.clients.items() if time.monotonic() - seen < 10]
+            packet = dict(type='shutdown', v=PROTOCOL_VERSION, server_id=self.server_id,
+                          message='后台正在退出')
+        # Notify both the owner and read-only panels. Repeated packets tolerate
+        # a dropped datagram; the tray also waits for its own child to exit.
+        if self.sock:
+            for attempt in range(3):
+                for peer in peers:
+                    self._send(packet, peer)
+                if attempt < 2 and peers:
+                    time.sleep(.02)
+
     def close(self):
-        self.closed.set()
         self.service.stop('UDP 服务关闭')
+        self.notify_shutdown()
+        self.closed.set()
         if self.sock:
             self.sock.close()
         if hasattr(self, 'thread'):

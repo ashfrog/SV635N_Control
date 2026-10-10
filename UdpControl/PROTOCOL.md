@@ -93,3 +93,7 @@ disable 不要求 seq，匹配当前 run_id 就优先请求停止。ack 仅表�
 PCIe 后台新增 `state.limits`（扫描后持续更新，包括未使能/未选中轴）：每项包含 `order`、`input`（推出端 `di1`/`di2` 或 null）、`state`（`triggered`/`clear`/`unconfigured`/`unavailable`）、`valid`、`triggered`（布尔或 null）、`extension_sign`（APS 原生位置方向 ±1；未配置为 0）、`digital_inputs`（60FD 原始值）、`positive_limit`、`negative_limit`、`di1`、`di2`。双端配置另有 `retraction_input`、`retraction_sign`、`retraction_state`、`retraction_triggered`，含义与推出端相同；未配置缩回端时 `retraction_state:"no_sensor"`。`conflict:true` 表示两端同时触发。未知反馈不代表未触发；通信新鲜度仍由接收时间判断。`input_configuration` 包含逐轴 `extension_limits` / `retraction_limits`，配置见根目录后台说明。
 
 推出端限位触发时只允许缩回，缩回端触发时只允许推出。朝已知触发端运动的请求返回 `ok:false`；若请求入队后才触发，由硬件线程丢弃整条多轴目标并更新 `state.message`，先前 ACK 不代表已执行。旧目标不会在传感器解除后自动恢复；触发后需显式提交离开该端的反向目标，并继续心跳。运行中两端同时触发时停止冲突轴运动并保持 `enabled`，两方向目标均拒绝；信号恢复后必须提交新目标，不恢复旧运动。使能前已有双端冲突仍拒绝启动；驱动报警、急停、掉线等仍进入 `fault`。`clear` 不表示到达机械零点，传感器触发也不会自动执行回零。
+
+## 后台退出通知
+
+后台正常退出时向最近连接并通过认证的客户端（包括只读客户端）重复发送 `{"v":1,"type":"shutdown","server_id":"...","message":"后台正在退出"}`。客户端只接受来自配置地址、且 server_id 与当前后台一致的通知；停止心跳及新运动请求，唤醒等待中的 RPC，控制界面关闭窗口并退出进程。SDK 的 `backend_exiting` 事件表示收到退出通知；需要连接新后台时可显式调用 `hello()`，新 server_id 会清除此事件，旧实例的退出通知不能关闭新连接。

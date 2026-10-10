@@ -1,11 +1,14 @@
 import threading
 from contextlib import contextmanager
 import gc
+import subprocess
+import sys
+from pathlib import Path
 import time
 import tkinter as tk
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from core import ControlError, EtherCATController
 from test_platform_control import FakeMaster
@@ -320,6 +323,7 @@ class UITests(unittest.TestCase):
                     menu=icon.call_args.args[3]
                     list(menu)[0](icon.return_value)
                 icon.return_value.run_detached.side_effect=start_icon
+                launch.return_value.poll.return_value=None
                 run_tray(self.service,self.server,dict(host='127.0.0.1',auth_key=''),quit_event)
                 icon.return_value.run_detached.assert_called_once()
                 icon.return_value.stop.assert_called_once()
@@ -327,10 +331,89 @@ class UITests(unittest.TestCase):
                 command=launch.call_args.args[0]
                 self.assertEqual(command[1:3],['-m','UdpControl'])
                 self.assertIn(str(self.server.port),command)
+                launch.return_value.wait.assert_called_once_with(timeout=3)
+                launch.return_value.terminate.assert_not_called()
             self.assertFalse(self.service.is_busy())
             self.assertFalse(self.masters)
         finally:
             timer.cancel()
+
+    def test_stuck_tray_child_is_terminated_after_graceful_shutdown_timeout(self):
+        quit_event=threading.Event()
+        with patch('pystray.Icon') as icon, patch('backend.subprocess.Popen') as launch:
+            def launch_then_quit():
+                list(icon.call_args.args[3])[0](icon.return_value)
+                list(icon.call_args.args[3])[2](icon.return_value)
+            icon.return_value.run_detached.side_effect=launch_then_quit
+            launch.return_value.poll.return_value=None
+            launch.return_value.wait.side_effect=[subprocess.TimeoutExpired('gui',3),0]
+            run_tray(self.service,self.server,dict(host='127.0.0.1',auth_key=''),quit_event)
+            launch.return_value.terminate.assert_called_once()
+            self.assertEqual(launch.return_value.wait.call_count,2)
+            self.assertTrue(self.service.shutdown.is_set())
+
+    def test_reopening_tray_panel_keeps_original_child_for_exit_cleanup(self):
+        quit_event=threading.Event()
+        original=Mock()
+        original.poll.return_value=None
+        activation=Mock()
+        with patch('pystray.Icon') as icon, patch('backend.subprocess.Popen',side_effect=[original,activation]) as launch:
+            def reopen_then_quit():
+                menu=list(icon.call_args.args[3])
+                menu[0](icon.return_value)
+                menu[0](icon.return_value)
+                menu[2](icon.return_value)
+            icon.return_value.run_detached.side_effect=reopen_then_quit
+            run_tray(self.service,self.server,dict(host='127.0.0.1',auth_key=''),quit_event)
+        self.assertEqual(launch.call_count,2)
+        original.wait.assert_called_once_with(timeout=3)
+        original.terminate.assert_not_called()
+        activation.wait.assert_not_called()
+        activation.terminate.assert_not_called()
+
+    def test_running_panel_exits_on_backend_shutdown_and_motors_stop(self):
+        with self.window() as (root,ui):
+            exited=threading.Event()
+            ui.exit_callback=exited.set
+            ui.claim()
+            self.pump(root,lambda:ui.state.get('phase')=='enabled' and not ui.pending and not ui.auto_start)
+            self.server.close()
+            self.pump(root,exited.is_set)
+            self.pump(root,lambda:self.service.phase=='idle')
+            self.assertTrue(self.service.snapshot()['result']['all_disabled'])
+            self.assertTrue(ui.start_cancel.is_set())
+
+    def test_standalone_gui_process_fully_exits_when_backend_closes(self):
+        process=subprocess.Popen([sys.executable,'-m','UdpControl','--host','127.0.0.1',
+                                  '--port',str(self.server.port)],
+                                 cwd=Path(__file__).resolve().parent,
+                                 stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
+        try:
+            deadline=time.monotonic()+5
+            while time.monotonic()<deadline:
+                with self.server.lock:
+                    connected=bool(self.server.clients)
+                if connected:
+                    break
+                time.sleep(.02)
+            self.assertTrue(connected,'GUI did not connect to fake backend')
+            duplicate=subprocess.run([sys.executable,'-m','UdpControl','--host','127.0.0.1',
+                                      '--port',str(self.server.port)],
+                                     cwd=Path(__file__).resolve().parent,
+                                     stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=5)
+            self.assertEqual(duplicate.returncode,0,duplicate.stderr.decode('utf-8',errors='replace'))
+            self.assertIsNone(process.poll())
+            with self.server.lock:
+                self.assertEqual(len(self.server.clients),1,'Duplicate GUI opened a new UDP client')
+            self.server.close()
+            process.wait(timeout=5)
+            self.assertEqual(process.returncode,0,process.stderr.read().decode('utf-8',errors='replace'))
+            self.assertFalse(self.masters)  # This process only observed fake backend state.
+        finally:
+            if process.poll() is None:
+                process.terminate()
+                process.wait(timeout=3)
+            process.stderr.close()
 
     def test_profile_sliders_and_entries_update_while_enabled(self):
         root=tk.Tk()

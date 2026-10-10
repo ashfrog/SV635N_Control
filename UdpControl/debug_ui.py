@@ -558,6 +558,12 @@ class DebugWindow:
                 self.status.set(self.status.get()+f" · 已应用 {profile['rpm']:g} rpm / {profile['acceleration_rpm_s']:g} rpm/s（拖动即更新，数值 Enter 应用）")
 
     def poll(self):
+        if self.client.backend_exiting.is_set():
+            self.auto_start=None
+            self.start_cancel.set()
+            self.latest_target=self.latest_profile=None
+            self.exit_callback()
+            return
         try:
             while True:
                 kind,result,label=self.events.get_nowait()

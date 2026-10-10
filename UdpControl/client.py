@@ -33,6 +33,7 @@ class MotorClient:
         self.server_id = None
         self.background_error = None
         self.closed = threading.Event()
+        self.backend_exiting = threading.Event()
         self.receiver = threading.Thread(target=self._receive, name='MotorClient-RX', daemon=True)
         self.heartbeats = threading.Thread(target=self._heartbeat, name='MotorClient-Heartbeat', daemon=True)
         self.receiver.start()
@@ -48,6 +49,14 @@ class MotorClient:
                 if not isinstance(packet, dict) or packet.get('v') != PROTOCOL_VERSION:
                     continue
                 with self.lock:
+                    if (packet.get('type') == 'shutdown' and self.server_id is not None
+                            and packet.get('server_id') == self.server_id):
+                        self.backend_exiting.set()
+                        self.session, self.run_id = None, None
+                        for request_id, (event, replies) in self.pending.items():
+                            replies.append(dict(ok=False, id=request_id, error='后台正在退出。'))
+                            event.set()
+                        continue
                     # Telemetry has a monotonic server counter so late UDP replies
                     # cannot roll the client's run/phase back to an earlier state.
                     serial = packet.get('state_serial', -1)
@@ -74,6 +83,8 @@ class MotorClient:
     def request(self, kind, retries=4, retry_timeout=.15, **payload):
         if self.closed.is_set():
             raise UDPError('客户端已关闭。')
+        if self.backend_exiting.is_set() and kind != 'hello':
+            raise UDPError('后台正在退出。')
         request_id = uuid.uuid4().hex
         with self.lock:
             packet = dict(v=PROTOCOL_VERSION, type=kind, id=request_id, **payload)
@@ -107,6 +118,7 @@ class MotorClient:
             reply = self.request('hello', claim=claim)
             with self.lock:
                 if self.server_id != reply['server_id']:
+                    self.backend_exiting.clear()  # Explicit SDK reconnect to a new instance.
                     self.server_id = reply['server_id']
                     self.state, self.state_serial = reply['state'], reply['state_serial']
                     self.state_received = time.monotonic()
@@ -122,6 +134,8 @@ class MotorClient:
         with self.control_lock:
             reply = self.request('enable', orders=orders, rpm=rpm, acceleration_rpm_s=acceleration_rpm_s)
             with self.lock:
+                if self.backend_exiting.is_set():
+                    raise UDPError('后台正在退出。')
                 self.run_id, self.sequence = reply['run_id'], -1
                 self.background_error = None
             return reply
@@ -184,7 +198,7 @@ class MotorClient:
     def _heartbeat(self):
         while not self.closed.wait(self.interval):
             with self.lock:
-                active = self.session and self.run_id and self.state.get('run_id') == self.run_id and self.state.get('phase') in ('enabling', 'enabled')
+                active = not self.backend_exiting.is_set() and self.session and self.run_id and self.state.get('run_id') == self.run_id and self.state.get('phase') in ('enabling', 'enabled')
             if active:
                 try:
                     self.heartbeat()
@@ -194,13 +208,13 @@ class MotorClient:
     def close(self):
         if self.closed.is_set():
             return
-        if self.run_id:
+        if self.run_id and not self.backend_exiting.is_set():
             try:
                 self.disable()
                 self.wait_for(('idle', 'fault'), timeout=10)
             except UDPError:
                 pass  # Server's independent watchdog remains responsible.
-        if self.session:
+        if self.session and not self.backend_exiting.is_set():
             try:
                 self.release()
             except UDPError:

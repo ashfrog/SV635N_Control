@@ -8,6 +8,7 @@ from pathlib import Path
 import tkinter as tk
 
 from .debug_ui import DebugWindow
+from .instance import PanelInstance
 
 BASE = Path(__file__).resolve().parent
 
@@ -36,9 +37,7 @@ def main():
     args = parser.parse_args()
     log_dir = BASE/'logs'
     log_dir.mkdir(exist_ok=True)
-    handler = RotatingFileHandler(log_dir/'client.log', maxBytes=1_000_000, backupCount=3, encoding='utf-8')
-    logging.basicConfig(level=logging.INFO, handlers=[handler], format='%(asctime)s %(levelname)s %(message)s')
-    root = window = None
+    root = window = instance = None
     try:
         config = load_config(args.config)
         if args.host is not None:
@@ -47,8 +46,22 @@ def main():
             if not 1 <= args.port <= 65535:
                 raise ValueError('port 须为 1～65535。')
             config['port'] = args.port
+        instance = PanelInstance(config['host'], config['port'])
+        if not instance.primary:
+            instance.activate()
+            return 0
+        handler = RotatingFileHandler(log_dir/'client.log', maxBytes=1_000_000, backupCount=3, encoding='utf-8')
+        logging.basicConfig(level=logging.INFO, handlers=[handler], format='%(asctime)s %(levelname)s %(message)s')
         root = tk.Tk()
         window = DebugWindow(root, config['host'], config['port'], config['auth_key'])
+        def check_activation():
+            if instance.requested():
+                window.show()
+                root.attributes('-topmost', True)
+                root.after(100, lambda: root.attributes('-topmost', False))
+                root.focus_force()
+            root.after(100, check_activation)
+        root.after(100, check_activation)
         root.mainloop()
     except Exception as exc:
         logging.exception('UDP GUI failure')
@@ -62,6 +75,8 @@ def main():
             root.destroy()
         del window, root
         gc.collect()
+        if instance:
+            instance.close()
     return 0
 
 
