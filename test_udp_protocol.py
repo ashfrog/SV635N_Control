@@ -32,6 +32,41 @@ class ProtocolTests(unittest.TestCase):
         self.service.enable.assert_called_once()
         self.assertFalse(self.server.handle(dict(packet,orders=[1]),self.peer)['ok'])
 
+    def test_read_only_card_refresh_preserves_existing_owner_and_control_sequence(self):
+        cards=[dict(name='PCIe-8332:0',description='ADLINK PCIe-8332')]
+        self.service.adapters.return_value=cards
+        sequence,last_seen=self.server.control_sequence,self.server.last_seen
+        reply=self.server.handle(dict(v=1,type='adapters',id='cards'),('127.0.0.1',54321))
+        self.assertTrue(reply['ok'])
+        self.assertEqual(reply['adapters'],cards)
+        self.assertFalse(reply['owns_control'])
+        self.assertEqual(self.server.owner,self.peer)
+        self.assertEqual(self.server.token,self.token)
+        self.assertEqual(self.server.control_sequence,sequence)
+        self.assertEqual(self.server.last_seen,last_seen)
+        self.service.scan.assert_not_called()
+        self.service.enable.assert_not_called()
+        secured=UDPServer(self.service,auth_key='secret',port=0)
+        packet=dict(v=1,type='adapters',id='secure-cards')
+        self.assertFalse(secured.handle(packet,self.peer)['ok'])
+        self.assertTrue(secured.handle(dict(packet,auth_key='secret'),self.peer)['ok'])
+        self.assertIsNone(secured.owner)
+
+    def test_sdk_refreshes_card_without_claim_or_incrementing_control_sequence(self):
+        self.service.adapters.return_value=[dict(name='PCIe-8332:0',description='ADLINK PCIe-8332')]
+        self.server.start()
+        try:
+            with MotorClient(port=self.server.port) as observer:
+                observer.hello(claim=False)
+                previous=observer.control_sequence
+                reply=observer.request('adapters')
+                self.assertEqual(reply['adapters'][0]['name'],'PCIe-8332:0')
+                self.assertIsNone(observer.session)
+                self.assertEqual(observer.control_sequence,previous)
+                self.assertEqual(self.server.owner,self.peer)
+        finally:
+            self.server.close()
+
     def test_profile_authorization_and_duplicate_ack(self):
         packet=self.packet('profile',run_id='run',seq=7,rpm=30,acceleration_rpm_s=60)
         self.assertFalse(self.server.handle(packet,('127.0.0.1',12346))['ok'])

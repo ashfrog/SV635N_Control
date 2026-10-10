@@ -27,6 +27,7 @@ class UITests(unittest.TestCase):
             self.masters.append(master)
             return EtherCATController('fake',master_factory=lambda:master)
         self.service=MotorService('fake',controller_factory=factory)
+        self.service.adapters=lambda:[dict(name='fake',description='模拟控制卡')]
         self.server=UDPServer(self.service,port=0).start()
 
     def tearDown(self):
@@ -77,6 +78,57 @@ class UITests(unittest.TestCase):
                 time.sleep(.01)
             self.assertEqual(self.service.phase,'idle')
             self.assertEqual(len(self.masters),count)
+
+    def test_opening_panel_automatically_refreshes_card_without_taking_control(self):
+        with MotorClient(port=self.server.port) as owner:
+            owner.hello()
+            token=self.server.token
+            with self.window() as (root,ui):
+                self.pump(root,lambda:ui.adapter_server_id==self.server.server_id and not ui.pending)
+                self.assertEqual(ui.adapter_box.current(),0)
+                self.assertIn('模拟控制卡',ui.adapter.get())
+                self.assertIsNone(ui.client.session)
+                self.assertEqual(self.server.token,token)
+                self.assertFalse(self.masters)
+                self.assertEqual(self.service.phase,'idle')
+                self.assertEqual(str(ui.adapters_button['state']),'normal')
+
+    def test_read_only_panel_refreshes_card_and_displays_startup_scan_results(self):
+        self.service.scan()
+        with self.window() as (root,ui):
+            self.pump(root,lambda:ui.adapter_server_id==self.server.server_id
+                      and len(ui.tree.get_children())==4 and not ui.pending)
+            self.assertIn('模拟控制卡',ui.adapter.get())
+            self.assertIsNone(ui.client.session)
+            self.assertIsNone(self.service.run_id)
+            self.assertEqual(self.service.orders,[])
+            self.assertTrue(all(not slave.targets for master in self.masters for slave in master.slaves))
+
+    def test_card_refresh_retries_after_transient_failure_without_enabling(self):
+        calls=[]
+        def adapters():
+            calls.append(time.monotonic())
+            if len(calls)==1:
+                raise ControlError('模拟卡列表刷新暂时失败')
+            return [dict(name='fake',description='模拟控制卡')]
+        self.service.adapters=adapters
+        with self.window() as (root,ui):
+            self.pump(root,lambda:ui.adapter_server_id==self.server.server_id and not ui.pending)
+            self.assertEqual(len(calls),2)
+            self.assertGreaterEqual(calls[1]-calls[0],.9)
+            self.assertIsNone(ui.client.session)
+            self.assertFalse(self.masters)
+
+    def test_panel_opened_before_backend_refreshes_card_when_service_connects(self):
+        port=self.server.port
+        self.server.close()
+        with self.window() as (root,ui):
+            self.pump(root,lambda:'未收到确认' in ui.log.get('1.0','end'))
+            self.server=UDPServer(self.service,port=port).start()
+            self.pump(root,lambda:ui.adapter_server_id==self.server.server_id and not ui.pending)
+            self.assertIn('模拟控制卡',ui.adapter.get())
+            self.assertIsNone(ui.client.session)
+            self.assertFalse(self.masters)
 
     def test_same_control_button_restores_all_motors_after_explicit_stop(self):
         with self.window() as (root,ui):

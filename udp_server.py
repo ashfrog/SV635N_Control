@@ -129,6 +129,11 @@ class UDPServer:
                     response['owns_control'] = peer == self.owner
                 elif kind == 'status':
                     response['owns_control'] = peer == self.owner
+                elif kind == 'adapters':
+                    # Configured card labels are read-only; this never opens
+                    # the APS DLL or renews a controller's motor heartbeat.
+                    response['adapters'] = self.service.adapters()
+                    response['owns_control'] = peer == self.owner
                 else:
                     if kind == 'release' and self.released and self.released[:2] == (peer, encode(packet)):
                         return self.released[2]
@@ -140,16 +145,14 @@ class UDPServer:
                         if old_fingerprint != fingerprint:
                             raise ControlError('重复 id 的请求内容不同。')
                         return old_response
-                    if kind in ('adapters', 'scan', 'enable', 'release'):
+                    if kind in ('scan', 'enable', 'release'):
                         seq = packet.get('control_seq')
                         if type(seq) is not int or not 0 <= seq <= 2**53 - 1 or seq <= self.control_sequence:
                             raise ControlError('control_seq 必须严格递增；过期控制请求不能再次执行。')
                         self.control_sequence = seq
                     self.last_seen = time.monotonic()
                     self._remember_client(peer)
-                    if kind == 'adapters':
-                        response['adapters'] = self.service.adapters()
-                    elif kind == 'scan':
+                    if kind == 'scan':
                         self.service.scan(packet.get('adapter'))
                     elif kind == 'enable':
                         response['run_id'] = self.service.enable(packet.get('orders'),

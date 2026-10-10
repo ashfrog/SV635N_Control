@@ -43,6 +43,8 @@ class DebugWindow:
         self.last_render = 0
         self.rendered_serial = -1
         self.adapter_names = []
+        self.adapter_server_id = None
+        self.adapter_retry_at = 0
         self.adapter, self.rpm, self.acceleration = tk.StringVar(), tk.StringVar(value='60'), tk.StringVar(value='120')
         self.center, self.span = tk.StringVar(value='0'), tk.StringVar(value='360')
         self.position = tk.StringVar(value='共同目标偏移 0°')
@@ -240,6 +242,9 @@ class DebugWindow:
                 self.enable(automatic=True)
 
     def adapters(self):
+        if self.pending:
+            return
+        self.adapter_retry_at = time.monotonic()+1
         self.task(lambda:self.client.request('adapters'),'adapters')
 
     def scan(self, automatic=False):
@@ -514,8 +519,9 @@ class DebugWindow:
         idle=not self.auto_start and not self.enable_pending and state.get('phase') not in ('scanning','enabling','enabled','stopping')
         self.claim_button.configure(text='重新获取调试控制' if owner else '获取调试控制权',
                                    state='normal' if idle and not self.stop_pending else 'disabled')
-        for button in (self.release_button,self.adapters_button,self.scan_button):
+        for button in (self.release_button,self.scan_button):
             button.configure(state='normal' if owner and idle else 'disabled')
+        self.adapters_button.configure(state='normal' if self.client.server_id and not self.pending else 'disabled')
         self.adapter_box.configure(state='readonly' if owner and idle else 'disabled')
         self.stop_button.configure(state='normal' if self.auto_start or self.enable_pending or
                                    self.client.run_id and state.get('phase') in ('enabling','enabled') else 'disabled')
@@ -605,6 +611,7 @@ class DebugWindow:
                         self.log.delete('1.0','100.0')
                     self.log.configure(state='disabled')
                 elif label=='adapters':
+                    self.adapter_server_id=result['server_id']
                     self.adapter_names=[a['name'] for a in result['adapters']]
                     self.adapter_box.configure(values=[a['description']+' · '+a['name'] for a in result['adapters']])
                     if self.adapter_names:
@@ -629,7 +636,12 @@ class DebugWindow:
         self.advance_start()
         self.flush_motion()
         if not self.pending:
-            if time.monotonic()-self.last_query >= (1. if self.client.session else .2):
+            if (self.client.server_id and self.adapter_server_id!=self.client.server_id
+                    and time.monotonic()>=self.adapter_retry_at):
+                # Refresh once per backend instance after its first handshake;
+                # no control claim, scan or enable is needed for card labels.
+                self.adapters()
+            elif time.monotonic()-self.last_query >= (1. if self.client.session else .2):
                 # hello refreshes an idle lease, but never the motor heartbeat.
                 self.last_query=time.monotonic()
                 self.task(lambda:self.client.hello(claim=bool(self.client.session)),'status')

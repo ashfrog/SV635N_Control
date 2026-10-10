@@ -18,13 +18,15 @@ state 的 phase 是 `idle / scanning / enabling / enabled / stopping / fault`。
 
 ## 扫描与使能
 
-以下操作需要 session 和严格递增的 control_seq（0～2^53-1）：`adapters / scan / enable / release`。从 hello 返回的 control_seq+1 开始递增。重发同一个请求时保留 id、control_seq 和内容；失败后的新请求换 id 并增加 control_seq。
+`adapters` 是只读的控制卡配置查询，与 `status` 一样无需获取控制权，也不占用 control_seq；配置 auth_key 时仍须携带正确密钥。只读刷新不会重新初始化控制卡、扫描电机、改变控制权或续期电机心跳。
 
 ```json
-{"v":1,"id":"a1","type":"adapters","session":"...","control_seq":0}
+{"v":1,"id":"a1","type":"adapters"}
 ```
 
-返回 `adapters:[{"name":"PCIe-8332:0","description":"..."}]`。
+返回 `adapters:[{"name":"PCIe-8332:0","description":"..."}]`，表示后台配置的控制卡。后台启动时自动连接该卡并扫描电机，实际连接/扫描结果由 state.phase、state.message 和 state.devices 反馈。面板连接后台后自动刷新并选中该卡；旧客户端附带 session/control_seq 的 adapters 请求仍可读取列表。
+
+以下操作需要 session 和严格递增的 control_seq（0～2^53-1）：`scan / enable / release`。从 hello 返回的 control_seq+1 开始递增。重发同一个请求时保留 id、control_seq 和内容；失败后的新请求换 id 并增加 control_seq。
 
 ```json
 {"v":1,"id":"s1","type":"scan","session":"...","control_seq":1,"adapter":"PCIe-8332:0"}

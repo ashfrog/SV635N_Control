@@ -1018,6 +1018,10 @@ class APSUDPTests(unittest.TestCase):
                                 break
                             time.sleep(.01)
                         observed.append(state)
+                        cards=client.request('adapters')['adapters']
+                        self.assertEqual(cards[0]['name'],config['adapter'])
+                        self.assertIn('ADLINK PCIe-8332',cards[0]['description'])
+                        self.assertIsNone(client.session)
                         if fail_scan:
                             api.fail_start = False
                             client.hello()

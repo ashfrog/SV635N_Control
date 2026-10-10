@@ -166,7 +166,7 @@ def main():
             server=UDPServer(service,config['host'],config['port'],config['auth_key']).start(reserved_socket)
             service.scan()
         if args.headless:
-            print(f"SV635N UDP 后台已启动：{config['host']}:{server.port}，正在自动扫描 {config['adapter']}，电机未使能。",flush=True)
+            print(f"SV635N UDP 后台已启动：{config['host']}:{server.port}，正在自动连接并刷新控制卡 {config['adapter']}、扫描电机，电机未使能。",flush=True)
             while not quit_event.wait(.2):
                 if server.closed.is_set():
                     break

@@ -92,7 +92,7 @@ class MotorClient:
                 packet['session'] = self.session
             if self.auth_key:
                 packet['auth_key'] = self.auth_key
-            if kind in ('adapters', 'scan', 'enable', 'release'):
+            if kind in ('scan', 'enable', 'release'):
                 self.control_sequence += 1
                 packet['control_seq'] = self.control_sequence
             event, replies = threading.Event(), []

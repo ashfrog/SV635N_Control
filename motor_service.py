@@ -86,7 +86,7 @@ class MotorService:
                 if self.hardware and adapter != self.hardware.adapter:
                     raise ControlError('控制卡与后台 aps.board_id 配置不一致。')
                 self.adapter = adapter
-            self.phase, self.message = 'scanning', '正在扫描电机，不使能'
+            self.phase, self.message = 'scanning', f'正在连接并刷新控制卡 {self.adapter}，扫描电机，不使能'
             self.devices, self.axes, self.orders, self.result = [], [], [], None
             self.limits = {}
             self.executor.submit(self._scan)
