@@ -556,6 +556,10 @@ class PCIe8332Controller:
         def check_stop():
             if stop.is_set() or commands.closed:
                 raise Stopped('连续控制已停止。')
+        def check_platform_limits(sensor):
+            if (getattr(commands, 'stop_at_any_limit', False) and
+                    (sensor.get('triggered') or sensor.get('retraction_triggered') or sensor.get('conflict'))):
+                raise ControlError('平台端点限位触发，停止全部撑杆。')
         def io_checked(d, enabled=False, io=None):
             if io is None:
                 io = api.call('APS_motion_io_status', d.axis_id)
@@ -611,6 +615,7 @@ class PCIe8332Controller:
                     raise ControlError(f'电机 {d.order}（Axis {d.axis_id}）驱动报警 0x{d.error_code:04X}；'
                                        '请处理报警后重新扫描并恢复控制。')
                 self.check_limit_feedback(d, preflight[d.order])
+                check_platform_limits(preflight[d.order])
                 io_checked(d)
             profile_revision, rpm, acceleration_rpm_s = commands.profile()
             def native_profile(rpm, acceleration_rpm_s):
@@ -629,7 +634,9 @@ class PCIe8332Controller:
                     unwired = (PEL | MEL) & ~d.limit_mask
                     api.call('APS_set_axis_param', d.axis_id, LIMIT_MAP_EN, original & ~unwired)
                 if d.endpoints:
-                    self.check_limit_feedback(d, self.read_inputs([d])[d.order])
+                    sensor = self.read_inputs([d])[d.order]
+                    self.check_limit_feedback(d, sensor)
+                    check_platform_limits(sensor)
                 io_checked(d)
                 velocity, acceleration = profile_values[d.axis_id]
                 saved_deceleration[d.axis_id] = api.value('APS_get_axis_param_f', d.axis_id, SD_DEC)
@@ -682,6 +689,7 @@ class PCIe8332Controller:
                 for d in selected:
                     sensor = limits[d.order]
                     self.check_limit_feedback(d, sensor, allow_conflict=True)
+                    check_platform_limits(sensor)
                     io = io_checked(d, True, io=io_status[d.axis_id])
                     status = api.call('APS_motion_status', d.axis_id)
                     if status_due or sensor.get('triggered') or sensor.get('retraction_triggered'):
@@ -779,6 +787,7 @@ class PCIe8332Controller:
                     for d, target in zip(selected, targets):
                         sensor = fresh_limits[d.order]
                         self.check_limit_feedback(d, sensor, allow_conflict=True)
+                        check_platform_limits(sensor)
                         if hold_conflict(d, sensor, {**limits, **fresh_limits}):
                             blocked.append(d.order)
                             continue

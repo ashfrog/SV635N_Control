@@ -155,8 +155,18 @@ class UDPServer:
                     if kind == 'scan':
                         self.service.scan(packet.get('adapter'))
                     elif kind == 'enable':
+                        options = {}
+                        if 'mode' in packet:
+                            options = dict(mode=packet['mode'],
+                                reference_confirmed=packet.get('reference_confirmed', False),
+                                calibration_id=packet.get('calibration_id'))
                         response['run_id'] = self.service.enable(packet.get('orders'),
-                            packet.get('rpm', 60), packet.get('acceleration_rpm_s', 120))
+                            packet.get('rpm', 60), packet.get('acceleration_rpm_s', 120), **options)
+                    elif kind == 'pose':
+                        if not isinstance(packet.get('pose'), dict):
+                            raise ControlError('pose must be an object')
+                        response['accepted'] = self.service.command(packet.get('run_id'), packet.get('seq'),
+                            pose=packet['pose'])
                     elif kind in ('target', 'heartbeat'):
                         if kind == 'target' and not isinstance(packet.get('targets_deg'), list):
                             raise ControlError('targets_deg 必须是数组。')

@@ -13,6 +13,7 @@ from .client import MotorClient
 class DebugWindow:
     def __init__(self, root, host, port, auth_key='', exit_callback=None):
         self.root, self.exit_callback = root, exit_callback or root.quit
+        self.closing = False
         self.stop_callback = self.stop
         self.client = MotorClient(host, port, auth_key)
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='Debug-UDP')
@@ -31,6 +32,10 @@ class DebugWindow:
         self.latest_profile = None
         self.profile_run = None
         self.syncing_profile = False
+        self.profile_edit_handle = None
+        self.target_edit_handle = None
+        self.target_edit_value = None
+        self.target_edit_trace = None
         self.target_values = {}
         self.target_run = None
         self.target_editor = None
@@ -109,12 +114,12 @@ class DebugWindow:
         self.acceleration_slider = ttk.Scale(params,from_=1,to=3000,
                                              command=lambda value:self.drag_profile('acceleration',value))
         self.acceleration_slider.grid(row=1,column=2,sticky='ew',padx=(0,12))
-        self.profile_button = ttk.Button(params,text='应用速度 / 加减速度',command=self.apply_profile)
-        self.profile_button.grid(row=0,column=3,rowspan=2,sticky='ew')
         for entry in (self.rpm_entry,self.acceleration_entry):
             entry.bind('<Return>',lambda _:self.apply_profile())
-            entry.bind('<FocusOut>',lambda _:self.sync_profile_sliders())
+            entry.bind('<FocusOut>',lambda _:self.apply_profile())
         self.sync_profile_sliders()
+        self.profile_edit_traces = [(variable, variable.trace_add('write', self.schedule_profile_edit))
+                                    for variable in (self.rpm, self.acceleration)]
         ttk.Label(frame,text='获取控制权后全部电机保持连续使能；限位仅停止运动。停止后可重新获取控制，关闭使能 / Esc 可取消。').pack(anchor='w')
         target_controls = ttk.Frame(frame)
         target_controls.pack(fill='x',pady=(12,0))
@@ -124,8 +129,6 @@ class DebugWindow:
         self.axis_box.current(0)
         self.axis_box.pack(side='left',padx=8)
         self.axis_box.bind('<<ComboboxSelected>>',lambda _:self.sync_slider())
-        self.targets_button = ttk.Button(target_controls,text='发送各轴目标',command=self.send_targets)
-        self.targets_button.pack(side='right')
         ttk.Label(frame,textvariable=self.position,font=('Microsoft YaHei UI',13,'bold')).pack(anchor='w',pady=(16,4))
         self.slider = ttk.Scale(frame,from_=-360,to=360,command=self.drag)
         self.slider.pack(fill='x',pady=8)
@@ -138,14 +141,10 @@ class DebugWindow:
         ttk.Button(ranges,text='设置显示范围',command=self.set_range).pack(side='left')
         self.zero_button=ttk.Button(ranges,text='所选轴回到使能起点',command=lambda:self.queue_target(0))
         self.zero_button.pack(side='right')
-        ttk.Label(frame,text='双击“目标偏移 °”分别输入每轴目标，Enter 发送；滑块可选择单轴或全部使能轴，单轴操作保持其它轴目标。').pack(anchor='w',pady=10)
+        ttk.Label(frame,text='滑块拖动即更新；数字停输 0.35 秒、按 Enter 或离开输入框自动设定。各轴目标分别生效，保持其它轴目标。').pack(anchor='w',pady=10)
         ttk.Label(frame,textvariable=self.status,wraplength=980).pack(anchor='w',pady=8)
         self.log = tk.Text(frame,height=4,state='disabled',wrap='word')
         self.log.pack(fill='both',expand=True)
-        footer = ttk.Frame(frame)
-        footer.pack(fill='x',pady=(10,0))
-        self.close_button=ttk.Button(footer,text='关闭控制界面',command=self.exit_callback)
-        self.close_button.pack(side='right')
         self.poll_handle = root.after(5,self.poll)
 
     def show(self):
@@ -160,6 +159,8 @@ class DebugWindow:
         self.start_cancel.set()
         self.latest_target = None
         self.latest_profile = None
+        self.cancel_edit_timer('profile_edit_handle')
+        self.finish_target_edit()
         if self.stop_pending or not self.client.run_id:
             return
         self.stop_pending = True
@@ -327,7 +328,37 @@ class DebugWindow:
         getattr(self,name).set(f'{float(value):.1f}')
         self.apply_profile()
 
+    def cancel_edit_timer(self, name):
+        handle = getattr(self, name)
+        if handle is not None:
+            self.root.after_cancel(handle)
+            setattr(self, name, None)
+
+    def schedule_profile_edit(self, *_):
+        if self.syncing_profile or self.closing:
+            return
+        self.cancel_edit_timer('profile_edit_handle')
+        run_id = self.client.run_id
+        def apply():
+            self.profile_edit_handle = None
+            if run_id == self.client.run_id:
+                self.apply_profile()
+        self.profile_edit_handle = self.root.after(350, apply)
+
+    def show_profile(self, profile):
+        # Server feedback is display data, never a new user edit.
+        self.syncing_profile = True
+        try:
+            self.rpm.set(f"{profile['rpm']:g}")
+            self.acceleration.set(f"{profile['acceleration_rpm_s']:g}")
+        finally:
+            self.syncing_profile = False
+        self.sync_profile_sliders()
+
     def apply_profile(self):
+        if self.closing:
+            return
+        self.cancel_edit_timer('profile_edit_handle')
         try:
             rpm, acceleration = float(self.rpm.get()),float(self.acceleration.get())
             if not all(math.isfinite(v) and v > 0 for v in (rpm,acceleration)):
@@ -336,7 +367,7 @@ class DebugWindow:
             self.status.set('速度和加减速度必须为大于 0 的有限数值。')
             return
         self.sync_profile_sliders()
-        if (self.client.session and self.client.run_id and
+        if (not self.stop_pending and self.client.session and self.client.run_id and
                 self.state.get('phase')=='enabled' and self.client.run_id==self.state.get('run_id')):
             self.latest_profile=(self.client.run_id,rpm,acceleration)
 
@@ -413,22 +444,36 @@ class DebugWindow:
         if (self.state.get('phase')!='enabled' or self.client.run_id!=self.state.get('run_id')
                 or order not in self.state.get('orders',[])):
             return 'break'
-        self.finish_target_edit()
+        self.commit_target_edit(report_error=False)
         box=self.tree.bbox(row,'target')
         if not box:
             return 'break'
-        editor=ttk.Entry(self.tree,justify='center')
-        editor.insert(0,self.tree.set(row,'target'))
+        self.target_edit_value=tk.StringVar(value=self.tree.set(row,'target'))
+        editor=ttk.Entry(self.tree,justify='center',textvariable=self.target_edit_value)
         editor.select_range(0,'end')
         editor.place(x=box[0],y=box[1],width=box[2],height=box[3])
         self.target_editor=editor
         self.target_editor_order=order
         editor.bind('<Return>',lambda _:self.commit_target_edit())
         editor.bind('<Escape>',lambda _:self.finish_target_edit())
+        editor.bind('<FocusOut>',lambda _:self.commit_target_edit(report_error=False))
+        self.target_edit_trace=self.target_edit_value.trace_add('write',self.schedule_target_edit)
         editor.focus_set()
         return 'break'
 
-    def commit_target_edit(self):
+    def schedule_target_edit(self, *_):
+        if self.closing:
+            return
+        self.cancel_edit_timer('target_edit_handle')
+        editor, run_id = self.target_editor, self.client.run_id
+        def apply():
+            self.target_edit_handle = None
+            if self.target_editor is editor and run_id == self.client.run_id:
+                self.commit_target_edit(finish=False, report_error=False)
+        self.target_edit_handle = self.root.after(350, apply)
+
+    def commit_target_edit(self, *, finish=True, report_error=True):
+        self.cancel_edit_timer('target_edit_handle')
         if self.target_editor is None:
             return 'break'
         try:
@@ -436,27 +481,29 @@ class DebugWindow:
             if not math.isfinite(value):
                 raise ValueError()
         except ValueError:
-            messagebox.showerror('各轴目标','请输入有限的角度数值。',parent=self.root)
+            if report_error:
+                messagebox.showerror('各轴目标','请输入有限的角度数值。',parent=self.root)
+            elif finish:
+                self.status.set('目标未设定：请输入有限的角度数值。')
+                self.finish_target_edit()
             return 'break'
         order=self.target_editor_order
-        self.finish_target_edit()
+        if finish:
+            self.finish_target_edit()
         self.queue_axis_target(order,value)
         self.sync_slider()
         return 'break'
 
     def finish_target_edit(self):
-        if self.target_editor is not None:
-            self.target_editor.destroy()
-            self.target_editor=None
-            self.target_editor_order=None
-
-    def send_targets(self):
-        if self.target_editor is not None:
-            self.commit_target_edit()
-            return
-        values=self.current_targets()
-        if values and self.state.get('phase')=='enabled' and self.client.run_id==self.state.get('run_id'):
-            self.latest_target=[values[axis] for axis in self.state['orders']]
+        self.cancel_edit_timer('target_edit_handle')
+        editor=self.target_editor
+        self.target_editor=None
+        self.target_editor_order=None
+        if self.target_edit_value is not None and self.target_edit_trace is not None:
+            self.target_edit_value.trace_remove('write',self.target_edit_trace)
+        self.target_edit_value=self.target_edit_trace=None
+        if editor is not None:
+            editor.destroy()
 
     def render(self,state,feedback_time=None):
         self.last_render=time.monotonic()
@@ -528,16 +575,12 @@ class DebugWindow:
         controllable=owner and self.client.run_id==state.get('run_id') and state.get('phase')=='enabled'
         for widget in (self.rpm_entry,self.acceleration_entry,self.rpm_slider,self.acceleration_slider):
             widget.configure(state='normal' if owner and (idle or controllable) else 'disabled')
-        self.profile_button.configure(state='normal' if controllable else 'disabled')
         if controllable and self.profile_run != state.get('run_id'):
             self.profile_run=state['run_id']
             profile=state.get('profile') or {}
             if profile:
-                self.rpm.set(f"{profile['rpm']:g}")
-                self.acceleration.set(f"{profile['acceleration_rpm_s']:g}")
-                self.sync_profile_sliders()
+                self.show_profile(profile)
         self.slider.configure(state='normal' if controllable else 'disabled')
-        self.targets_button.configure(state='normal' if controllable else 'disabled')
         self.zero_button.configure(state='normal' if controllable else 'disabled')
         active_orders=state.get('orders',[]) if controllable else []
         if self.slider_orders!=[None]+active_orders:
@@ -561,7 +604,7 @@ class DebugWindow:
         if controllable:
             profile=state.get('applied_profile') or {}
             if profile:
-                self.status.set(self.status.get()+f" · 已应用 {profile['rpm']:g} rpm / {profile['acceleration_rpm_s']:g} rpm/s（拖动即更新，数值 Enter 应用）")
+                self.status.set(self.status.get()+f" · 已应用 {profile['rpm']:g} rpm / {profile['acceleration_rpm_s']:g} rpm/s（拖动或修改数字自动设定）")
 
     def poll(self):
         if self.client.backend_exiting.is_set():
@@ -600,9 +643,7 @@ class DebugWindow:
                     if label=='profile' and self.motion_run==self.client.run_id and self.latest_profile is None:
                         profile=self.client.state.get('profile') or {}
                         if profile:
-                            self.rpm.set(f"{profile['rpm']:g}")
-                            self.acceleration.set(f"{profile['acceleration_rpm_s']:g}")
-                            self.sync_profile_sliders()
+                            self.show_profile(profile)
                     self.status.set(result)
                     self.log.configure(state='normal')
                     self.log.insert('end',result+'\n')
@@ -648,6 +689,9 @@ class DebugWindow:
         self.poll_handle=self.root.after(5,self.poll)
 
     def close(self):
+        if self.closing:
+            return
+        self.closing = True
         self.stop()
         self.finish_target_edit()
         self.root.after_cancel(self.poll_handle)
@@ -655,6 +699,9 @@ class DebugWindow:
         self.motion_executor.shutdown(wait=True)
         self.stop_executor.shutdown(wait=True)
         self.client.close()
+        for variable, trace in self.profile_edit_traces:
+            variable.trace_remove('write', trace)
+        self.profile_edit_traces.clear()
         # Tk variables must be finalized on this UI thread. Destroyed windows
         # may otherwise be collected by a network worker during a later run.
         for name in ('adapter','rpm','acceleration','center','span','position','slider_axis','status'):

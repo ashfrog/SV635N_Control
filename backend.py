@@ -16,12 +16,13 @@ import time
 from aps_backend import validate_options
 from udp_server import UDPServer, bind_socket, encode, decode, PROTOCOL_VERSION, MAX_PACKET
 from motor_service import MotorService
+from platform_motion import validate_platform
 
 BASE=Path(__file__).resolve().parent
 
 
 def load_config(path):
-    config=dict(host='127.0.0.1',port=5005,adapter=None,heartbeat_timeout_s=.5,auth_key='',aps={})
+    config=dict(host='127.0.0.1',port=5005,adapter=None,heartbeat_timeout_s=.5,auth_key='',aps={},platform={})
     if path.exists():
         supplied=json.loads(path.read_text(encoding='utf-8-sig'))
         if not isinstance(supplied,dict) or set(supplied)-set(config):
@@ -30,6 +31,7 @@ def load_config(path):
     if not isinstance(config['host'],str) or type(config['port']) is not int or not 1<=config['port']<=65535:
         raise ValueError('host/port 配置无效。')
     config['aps'] = validate_options(config['aps'])
+    config['platform'] = validate_platform(config['platform'])
     configured_adapter = f"PCIe-8332:{config['aps']['board_id']}"
     if config['adapter'] is None:
         config['adapter'] = configured_adapter
@@ -159,7 +161,8 @@ def main():
             raise
         handler=RotatingFileHandler(log_dir/'service.log',maxBytes=2_000_000,backupCount=5,encoding='utf-8')
         logging.basicConfig(level=logging.INFO,handlers=[handler],format='%(asctime)s %(levelname)s %(name)s %(message)s')
-        service=MotorService(config['adapter'],log_dir,config['heartbeat_timeout_s'],aps_options=config['aps'])
+        service=MotorService(config['adapter'],log_dir,config['heartbeat_timeout_s'],
+                             aps_options=config['aps'],platform_options=config['platform'])
         # Publish the startup scan before the first client can enable or rescan.
         # Bind first so a duplicate backend cannot start accessing the card.
         with service.lock:

@@ -9,6 +9,7 @@ import uuid
 
 from control_common import ControlError, MotionQueue
 from aps_backend import PCIe8332Controller
+from platform_motion import PlatformGeometry, PlatformMotionQueue
 
 LOG = logging.getLogger(__name__)
 BUSY = ('scanning', 'enabling', 'enabled', 'stopping')
@@ -16,12 +17,21 @@ BUSY = ('scanning', 'enabling', 'enabled', 'stopping')
 
 class MotorService:
     def __init__(self, adapter='PCIe-8332:0', log_dir=None, heartbeat_timeout=.5, controller_factory=None,
-                 aps_options=None):
+                 aps_options=None, platform_options=None, hardware_controller=None):
         if type(heartbeat_timeout) not in (float, int) or not math.isfinite(heartbeat_timeout) or not .1 <= heartbeat_timeout <= 5:
             raise ValueError('heartbeat_timeout 必须为 0.1～5 秒。')
         self.adapter, self.log_dir, self.timeout = adapter, log_dir, heartbeat_timeout
         self.controller_factory = controller_factory
-        self.hardware = None if controller_factory else PCIe8332Controller(adapter, log_dir, aps_options)
+        self.platform = PlatformGeometry(platform_options or {})
+        self.control_mode = 'motor'
+        self.platform_pose = None
+        self.platform_lengths = []
+        self.last_pose = 0
+        self.tracking_since = None
+        if hardware_controller is not None and controller_factory is not None:
+            raise ValueError('Specify hardware_controller or controller_factory, not both')
+        self.hardware = (hardware_controller if hardware_controller is not None else
+                         None if controller_factory else PCIe8332Controller(adapter, log_dir, aps_options))
         self.lock = threading.RLock()
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='Motor-Hardware')
         self.devices = []
@@ -47,7 +57,19 @@ class MotorService:
             feedback = {a['order']: a for a in self.axes}
             profile = self.commands.profile() if self.commands else None
             return deepcopy(dict(phase=self.phase, message=self.message, adapter=self.adapter,
-                hardware_backend='aps' if self.hardware else 'injected',
+                control_mode=self.control_mode,
+                platform=dict(configured=self.platform.config['enabled'],
+                    calibration_id=self.platform.config['calibration_id'],
+                    orders=self.platform.orders, pose=self.platform_pose,
+                    lengths_mm=self.platform_lengths,
+                    commanded_deg=list(self.commands.output) if isinstance(self.commands, PlatformMotionQueue) else [],
+                    actual_lengths_mm=[(feedback[leg['order']]['travel_degrees'] * leg['mm_per_rev']
+                        / 360 * leg['extension_sign'] if leg['order'] in feedback else None)
+                        for leg in self.platform.legs],
+                    pose_timeout_s=self.platform.config['pose_timeout_s'],
+                    pose_age_s=(max(0., time.monotonic()-self.last_pose)
+                                if self.control_mode == 'platform' and self.run_id else None)),
+                hardware_backend=getattr(self.hardware, 'backend_name', 'aps') if self.hardware else 'injected',
                 input_configuration=({key: self.hardware.options[key] for key in
                     ('limit_inputs_connected', 'emg_input_connected', 'extension_limits',
                      'retraction_limits')} if self.hardware else {}),
@@ -109,7 +131,8 @@ class MotorService:
                 self.phase, self.message = 'fault', str(exc)
             LOG.exception('Scan failed')
 
-    def enable(self, orders, rpm=60, acceleration=120):
+    def enable(self, orders, rpm=60, acceleration=120, *, mode='motor', reference_confirmed=False,
+               calibration_id=None):
         with self.lock:
             if self.shutdown.is_set() or self.phase in BUSY:
                 raise ControlError('后台忙碌，请等待停止和参数恢复完成。')
@@ -117,7 +140,33 @@ class MotorService:
                 raise ControlError('故障已锁定，请核对设备并重新扫描后再开启。')
             if not isinstance(orders, list) or not orders or any(type(n) is not int for n in orders):
                 raise ControlError('orders 必须为非空链路位置整数数组。')
-            commands = MotionQueue(orders, rpm, acceleration)
+            if mode not in ('motor', 'platform'):
+                raise ControlError('Unknown control mode')
+            if mode == 'platform':
+                if not self.platform.config['enabled']:
+                    raise ControlError('Platform mode is not configured')
+                if reference_confirmed is not True or calibration_id != self.platform.config['calibration_id']:
+                    raise ControlError('Confirm physical neutral and the configured calibration_id for each run')
+                if orders != self.platform.orders:
+                    raise ControlError('Platform requires all three configured supports in order')
+                known_platform = {d.order: d for d in self.devices}
+                for leg in self.platform.legs:
+                    device = known_platform.get(leg['order'])
+                    if (device and hasattr(device, 'extension_sign') and device.extension_sign
+                            and leg['extension_sign'] != device.extension_sign * (1 if device.positive_direction else -1)):
+                        raise ControlError('Platform extension_sign disagrees with configured drive endpoint direction')
+                if self.hardware and self.platform.config['require_endpoint_sensors']:
+                    options = self.hardware.options
+                    selected = {d.order: str(d.axis_id) for d in self.devices}
+                    if (not options['limit_inputs_connected'] or any(
+                        selected.get(order) not in options[key] for order in orders
+                        for key in ('extension_limits', 'retraction_limits'))):
+                        raise ControlError('Platform requires configured dual endpoint sensors on all supports')
+                commands = PlatformMotionQueue(self.platform)
+            else:
+                if self.platform.config['enabled'] and not self.platform.config['allow_motor_debug']:
+                    raise ControlError('Direct motor debug is disabled for this configured platform')
+                commands = MotionQueue(orders, rpm, acceleration)
             known = {d.order: d for d in self.devices}
             if any(n not in known for n in orders):
                 raise ControlError('请先扫描并使用扫描结果中的链路位置。')
@@ -130,6 +179,10 @@ class MotorService:
                 if not self.hardware and device.error_code:
                     raise ControlError(f'电机 {n} 驱动报警 0x{device.error_code:04X}；请处理报警后重新扫描。')
             self.commands, self.orders = commands, list(orders)
+            self.control_mode = mode
+            self.platform_pose, self.platform_lengths = None, []
+            self.last_pose = time.monotonic()
+            self.tracking_since = None
             self.stop_event = threading.Event()
             self.run_id, self.sequence = uuid.uuid4().hex, -1
             self.target_sequence = self.heartbeat_sequence = self.profile_sequence = -1
@@ -147,6 +200,7 @@ class MotorService:
             if event['kind'] == 'continuous_ready':
                 if self.phase == 'enabling' and not self.stop_event.is_set():
                     self.phase, self.message = 'enabled', '连续使能就绪'
+                    self.last_pose = time.monotonic()
             elif event['kind'] == 'status':
                 self.axes = event['axes']
                 if 'limits' in event:
@@ -157,8 +211,32 @@ class MotorService:
                 self.message = event['text']
                 if 'limits' in event:
                     self.limits = event['limits']
+                if self.control_mode == 'platform':
+                    self.stop('平台端点限位触发，停止全部撑杆')
             elif event['kind'] == 'phase' and self.phase != 'stopping':
                 self.message = event['text']
+            if self.control_mode == 'platform' and self.phase in ('enabling', 'enabled'):
+                for order in self.orders:
+                    sensor = self.limits.get(order, {})
+                    if (sensor.get('triggered') or sensor.get('retraction_triggered')
+                            or sensor.get('conflict') or
+                            ((sensor.get('input') or sensor.get('retraction_input')) and not sensor.get('valid'))):
+                        self.stop('平台限位触发或反馈无效，停止全部撑杆')
+                        break
+                if event['kind'] == 'status' and self.phase == 'enabled':
+                    feedback = {a['order']: a for a in self.axes}
+                    error = any(leg['order'] not in feedback or abs(
+                        (feedback[leg['order']]['travel_degrees'] - self.commands.output[index])
+                        * leg['mm_per_rev'] / 360) > self.platform.config['max_tracking_error_mm']
+                        for index, leg in enumerate(self.platform.legs))
+                    now = time.monotonic()
+                    if error:
+                        if self.tracking_since is None:
+                            self.tracking_since = now
+                        elif now - self.tracking_since >= self.platform.config['tracking_timeout_s']:
+                            self.stop('平台撑杆跟随误差持续超限，停止全部撑杆')
+                    else:
+                        self.tracking_since = None
 
     def _run(self, commands, stop, devices):
         try:
@@ -186,7 +264,7 @@ class MotorService:
             commands.close()
         LOG.info('Run finished phase=%s result=%s', self.phase, self.result)
 
-    def command(self, run_id, sequence, targets=None, profile=None):
+    def command(self, run_id, sequence, targets=None, profile=None, pose=None):
         with self.lock:
             if not isinstance(run_id, str) or run_id != self.run_id:
                 raise ControlError('run_id 已失效，请显式开启新运行。')
@@ -197,10 +275,27 @@ class MotorService:
             if time.monotonic() - self.last_heartbeat >= self.timeout:
                 self.stop('UDP 心跳超时')
                 raise ControlError('UDP 心跳已超时，不能恢复本次运行。')
+            if (self.control_mode == 'platform' and self.phase == 'enabled'
+                    and time.monotonic() - self.last_pose >= self.platform.config['pose_timeout_s']):
+                self.stop('平台姿态流超时')
+                raise ControlError('Platform pose stream expired; explicitly arm a new run')
             previous = (self.profile_sequence if profile is not None else
-                        self.heartbeat_sequence if targets is None else self.target_sequence)
+                        self.heartbeat_sequence if targets is None and pose is None else self.target_sequence)
             if sequence <= previous:
                 return False
+            platform_values = None
+            if pose is not None:
+                if self.control_mode != 'platform' or targets is not None or profile is not None:
+                    raise ControlError('Platform pose requires a platform run')
+                if self.phase != 'enabled':
+                    raise ControlError('Wait for platform enable before sending poses')
+                try:
+                    platform_values, lengths, targets = self.platform.pose_to_targets(pose)
+                except ControlError:
+                    self.stop('平台目标无效或超出标定范围')
+                    raise
+            elif self.control_mode == 'platform' and (targets is not None or profile is not None):
+                raise ControlError('Platform run accepts poses only; raw targets/profiles cannot bypass limits')
             if profile is not None:
                 if self.phase != 'enabled':
                     raise ControlError('使能尚未就绪，不能更新速度和加速度。')
@@ -239,6 +334,9 @@ class MotorService:
                 self.heartbeat_sequence = sequence
             else:
                 self.target_sequence = sequence
+            if platform_values is not None:
+                self.platform_pose, self.platform_lengths = platform_values, lengths
+                self.last_pose = time.monotonic()
             self.sequence, self.last_heartbeat = max(self.sequence, sequence), time.monotonic()
             return True
 
@@ -258,6 +356,9 @@ class MotorService:
             with self.lock:
                 if self.phase in ('enabling', 'enabled') and time.monotonic() - self.last_heartbeat >= self.timeout:
                     self.stop('UDP 心跳超时')
+                if (self.control_mode == 'platform' and self.phase == 'enabled'
+                        and time.monotonic() - self.last_pose >= self.platform.config['pose_timeout_s']):
+                    self.stop('平台姿态流超时')
                 if (self.hardware and self.devices and self.phase not in BUSY
                         and not self.input_poll_pending and time.monotonic() - last_inputs >= .1):
                     self.input_poll_pending = True

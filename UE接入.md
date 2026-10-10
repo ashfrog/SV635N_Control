@@ -1,98 +1,112 @@
-# UE 三轴接入参考（暂未接入界面）
+# UE 三撑杆平台接入（后台 UDP v1）
 
-当前界面仅提供本地手动连续控制，不启动此 UDP 接口。本文和 `UE/` 组件保留为后续对接参考；要使用网络接口需由独立调用方显式启动文末的 `platform_control.run_three_axis()`。本地界面操作见 [使用说明.md](使用说明.md)。
+`UE/SV635NMotionComponent` 现在直接连接 `backend.py`，输入平台升降毫米、俯仰角和横滚角。旧 `platform_control.py` / `ue_demo.py` 使用另一套三轴电机角度协议，不能与本组件混用，也不要同时占用同一控制卡或 UDP 端口。
 
-当前接入层接收**三台电机的目标轴角度**，用于将游戏运动输出连续送给 SV635N。目标不是 Pitch、Roll、Heave；如游戏只有平台姿态，先按实际连杆尺寸、减速比、行程和安装方向做机构逆解，再输出三台电机角度。没有这些参数时，不能把平台姿态直接当成电机角度。
+## 架构与坐标
 
-## 操作
+UE → UDP v1 → MotorService → PlatformGeometry / PlatformMotionQueue → APS SDK → PCIe-8332 → 三台 SV635N。
 
-1. 通过独立调用方扫描电机，按**链路位置升序**传入三台电机的编号，对应目标数组第 1/2/3 项，握手反馈中的 `orders` 可核对。支持链路上其他未选设备保持未使能。
-2. 调用参数提供最高速度、加减速度、限位和超时。方向由目标角度正负表示，从轴端看正为顺时针，程序按各轴 H02.02 换算。
-3. 在运行条件核对后显式调用 `run_three_axis()`。默认监听 `127.0.0.1:5005`，默认限位 ±30°、超时 0.5 秒；完成 OP 建链后等待 UE，等待期间不使能。
-4. UE 从同一个 UDP socket 握手，并以 30～60 Hz 连续发送 `enable=true` 和三个目标角度。即使角度不变，也持续递增 `seq` 发送，作为心跳。首次使能前连续发送即可，无须等待建链完成。
-5. 调用方设置 `stop` 事件、UE 发送 `enable=false` 或有效指令超时，均结束当前会话并停止/关闭使能及恢复参数。重新运行须显式启动新会话并重新握手，旧会话指令不会启用新会话。
+固定平台坐标：X 向前、Y 向右、Z 向上。升降为毫米，角度为度；正俯仰抬高前端，正横滚抬高右端。UE 世界位置默认厘米，传入升降前需要乘 10。接口的角度采用本文约定，调用方应按实际 UE 姿态来源核对符号，不直接照搬未知坐标系的 Rotator。
 
-每次使能时的实际位置作为三个软件零点，不改写驱动器原点；重启控制后零点会重新捕获。该限位是相对软件零点的电机轴角度限位，不能替代机械行程限位或标定。
+对中位平面上水平位置 `(x_i, y_i)` 的撑杆，模型使用平面与竖直支撑线的交点：
 
-## UDP JSON 协议
-
-UTF-8，每个 UDP 数据报一个 JSON 对象，命令最大 4096 字节。默认仅同机；首个 `hello` 的来源 IP/端口绑定会话，后续命令必须使用同一个 socket。session 用于隔离旧报文，不是密码认证。
-
-握手请求（可在等待回复时重发）：
-
-```json
-{"type":"hello"}
+```
+delta_mm_i = heave_mm + x_i * tan(pitch) + y_i * tan(roll) / cos(pitch)
+motor_deg_i = delta_mm_i / mm_per_rev_i * 360 * extension_sign_i
 ```
 
-反馈示例（实际 session 每次不同）：
+角度在公式中换成弧度；平面法向量由 `Ry(-pitch) Rx(-roll)` 定义。此模型只适用于可通过关节/滑动机构容许倾斜的竖直升降支撑；若实际是固定长度连杆、曲柄或倾斜推杆，需要按真实机构替换逆解，不能直接套用。软件模型不验证结构自由度、载荷分布或侧向受力。
 
-```json
-{"type":"state","session":"本次返回的32位字符串","orders":[1,2,3],"limit_deg":30.0,"timeout_s":0.5,"seq":-1,"phase":"starting","enabled":false,"stopping":false}
+## 先运行无硬件模拟
+
+```powershell
+.\.venv\Scripts\python.exe simulated_backend.py
 ```
 
-正常目标，三个数均为**相对本次使能起点的绝对偏移角度**；重复 `[5,0,-5]` 不会再累加 5°：
-
-```json
-{"type":"command","session":"本次握手返回值","seq":0,"enable":true,"targets_deg":[5.0,0.0,-5.0]}
-```
-
-关闭使能：
-
-```json
-{"type":"command","session":"本次握手返回值","seq":1,"enable":false}
-```
-
-- `seq`：0～2^53-1 的整数，在会话内严格递增。乱序/重复目标与旧 session 不更新心跳；有效关闭使能指令即使乱序也优先停止。
-- `enable`：必须为 JSON 布尔值。本地许可和 UE 开启两者同时满足才使能；关闭后当前会话无法用 `true` 自动重新启动。
-- `targets_deg`：三个有限数值，可为 0；超出本地配置限位的有效会话指令会停止全部轴，不会截断为可执行目标。
-- 状态以约 10 Hz 返回发送端，`axes` 含链路位置、实际编码器位置、实际使能、报警与相对起点的 `travel_degrees`。`enabled` 是驱动器反馈，不是 UE 请求值。
-- `seq` 是最新接收的有效序号，不表示目标已经到位；确认位置请读取 `axes`。最终 `result` 包含停止、恢复/关闭使能核对信息，UDP 反馈不保证必达，以本地日志为准。
-
-接收只保留最新目标。三个轴在同一 PDO 周期收到绝对目标和 PP 新位置触发，驱动器确认并清除确认位后可继续更新目标，无须等待上一目标到位；用 PP 的“立即改变位置”位请求跟随新目标，速度/加速度受本地配置限制。相同编码器目标仅更新心跳，不重新触发轨迹。
-
-当前仍是 PP 运动模式，三台电机独立规划，尚未在实物上验证连续立即更新的跟随表现。Windows + 普通网卡不是实时系统，不能承诺高频姿态跟随或三轴机械同步。若需要真正逐周期同步插补，应进一步核对驱动器 CSP 能力、PDO 配置及机构标定。
+模拟后台监听 `127.0.0.1:5006`，不加载 APS DLL，不访问电机。UE 设置 Port=5006、CalibrationId=`simulation-only-v1`、Orders=[1,2,3]。模拟器从 `backend.platform.example.json` 读取虚拟机构，在内存中启用平台模式；反馈 `hardware_backend=simulated`。它验证协议、姿态换算、平滑目标和状态流程，不模拟真实制动器、驱动报警、EtherCAT 时序或载荷。
 
 ## UE C++ / 蓝图
 
-提供的 `UE/SV635NMotionComponent.h` 与 `.cpp` 可复制到 UE 项目的 `Source/你的模块/`。在对应模块 `.Build.cs` 的依赖中加入：
+将 `UE/SV635NMotionComponent.h` 和 `.cpp` 复制到目标 UE5 C++ 工程的 `Source/你的模块/`，在 `.Build.cs` 增加：
 
 ```csharp
 PrivateDependencyModuleNames.AddRange(new string[] { "Sockets", "Networking", "Json" });
 ```
 
-组件使用标准 UE Socket API，适用于 UE5 C++ 项目。在 Actor 上添加 `SV635NMotionComponent`，每帧调用蓝图 `Set Motor Targets` 提交三个电机角度，调用 `Set Motor Enable(true)` 开启 UE 发送，组件固定以约 30 Hz 发送。关闭时调用 `Set Motor Enable(false)`；退出游戏也发送关闭使能，突然退出由 PC 超时处理。查看 `Hardware Enabled`、`Last Status`、`Actual Motor Degrees` 和 `Mapped Orders` 获取反馈；`Feedback Valid` 为 false 时这些数值仅代表最后一次收到的反馈。
+若需要跨模块访问组件，为类声明增加目标模块的 `YOURMODULE_API` 宏。本仓库没有 `.uproject`，组件必须在目标 UE 工程编译与打包验证。
 
-组件遇到反馈 `stopping` 或 `closed` 会撤销 UE 使能请求；重新运行时先由 PC 调用方启动新会话，再在 UE 重新调用开启。UE 工程不在此仓库，示例需在目标工程中编译。
+在 Actor 添加组件，并按顺序接线：
 
-蓝图纯项目可用具有 UDP 收发功能的插件按上述协议接入；UE 默认蓝图没有通用 UDP JSON 发送节点。
+1. 每次游戏更新调用 `Set Platform Pose(HeaveMillimetres, PitchDegrees, RollDegrees)`，静止时也持续调用。首次运行先发送 `(0,0,0)`。
+2. 等 `Feedback Valid=true`、后台空闲、标定匹配。操作员确认三根撑杆确实处于标定中位，再显式调用 `Arm Platform(true)`。返回 true 仅表示开始异步申请；实际使能看反馈。
+3. 默认以 30 Hz 发送当前姿态。使能准备阶段发送心跳，后台使能就绪后发送姿态。
+4. 停止按钮调用 `Stop Platform`。结束 Play 也提交停止；暂停、游戏卡顿、姿态断流、反馈超时、故障或后台重启会撤销运动意图。
+5. 故障或停止后不会自动重启。处理问题并重新确认物理中位后才能再次 Arm；后台 fault 状态先通过客户端/SDK显式重新扫描。
 
-## 示例客户端
+组件固定使用同一 UDP socket，控制请求保留相同 id/内容重试，姿态请求只发送最新值；使用 server_id/state_serial 拒绝旧实例和乱序状态。停止过程中到达的迟到使能 ACK 会再请求关闭使能。游戏结束时不等待网络确认，后台心跳和姿态超时负责补充停止。
 
-独立调用方已启动 `run_three_axis()` 后，以下命令会向桥接程序发送三路缓慢正弦目标，默认幅度 5°，20 秒后发送关闭使能；这是运动客户端：
+`Hardware Enabled` 和 `Actual Motor Degrees` 是最后观测值，失联时不能认定电机已停止。核对 `Feedback Valid`、后台 `result.all_disabled` 和 `cleanup_errors`；SDK ACK 表示接受请求，不表示运动到位。
+
+## 真实机构配置与标定
+
+复制 `backend.platform.example.json` 为独立的正式配置文件，填写实测参数后才设置 `platform.enabled=true`。示例数字和标定名只适合模拟，不可当成实机参数；本机 `backend.config.json` 不会被程序自动修改。
+
+| 字段 | 含义 |
+|---|---|
+| `calibration_id` | 本次机构/中位标定版本，UE 必须完全匹配 |
+| `legs[].order` | 链路位置，三个不同编号，升序；不是 APS axis_id |
+| `x_mm/y_mm` | 三个支撑点相对平台参考中心的水平坐标，不可共线 |
+| `mm_per_rev` | 电机轴一转对应的实测升降毫米，包含丝杆和机械减速比；不是电子齿轮分子 |
+| `extension_sign` | 公共电机角度坐标中伸出方向 +1/-1；后台会与配置的推出限位方向核对 |
+| `min_mm/max_mm` | 相对实测中位的可用行程，预留机械余量，必须包含 0 |
+| `max_heave_mm/max_pitch_deg/max_roll_deg` | 姿态范围；同时校验三个撑杆的组合行程，不分别截断 |
+| `max_leg_speed_mm_s/max_leg_acceleration_mm_s2` | 每根撑杆速度/加速度上限；按最严格轴转换共同电机参数 |
+| `max_tracking_error_mm/tracking_timeout_s` | 命令中间目标与实际杆长持续偏差的停止阈值 |
+| `pose_timeout_s` | 新姿态到达间隔上限，默认 0.25 秒；普通心跳不能代替姿态流 |
+| `command_interval_s` | 目标下发最短间隔，默认 0.02 秒 |
+| `require_endpoint_sensors` | 默认要求每根撑杆配置有效的推出/缩回传感器 |
+| `allow_motor_debug` | 默认 false，防止单轴调试绕过平台约束；仅在机构脱开等维护条件下显式开放 |
+
+在 `aps.extension_limits/retraction_limits` 中配置实际 APS 轴号和 DI。平台模式任意端点触发都会停止全部撑杆；旧单轴调试的“限位后允许反向离开”不适用于承载平台。平台故障后的脱困应按实际机械维护流程进行。
+
+中位是每次使能起点，不是驱动器的持久机械原点。程序不自动回零，不通过端点传感器推断中位，也不能证明操作员确认属实。停止后的当前位置不能直接视为新中位；重新运行必须回到已标定物理中位，或重新测量可用行程并更新标定版本。
+
+启动正式后台：
 
 ```powershell
-.\.venv\Scripts\python.exe ue_demo.py --amplitude 5 --period 10 --seconds 20
+.\.venv\Scripts\python.exe backend.py --headless --config your.calibrated.config.json
 ```
 
-不连接硬件的协议与模拟驱动器回归测试：
+远程 UE 接入时设置后台 host 和 auth_key，UE 使用相同密钥。密钥用于请求认证，UDP 本身没有加密；实际控制网络应保持隔离。
 
-```powershell
-.\.venv\Scripts\python.exe -m unittest -v test_platform_control
-```
+## 控制能力与实机验证边界
 
-程序接入示例（实际运动 API，仍须 UE 有效开启命令）：
+软件把三杆目标按同一进度插值，限制每根杆的目标变化速度；APS 原生轨迹限制加速度，单一硬件线程顺序提交三轴绝对目标。这不是控制卡硬件同步插补，不能承诺三轴同一 EtherCAT 周期开始或平台严格跟踪瞬时姿态。实际跟随误差、相位差和可接受帧率必须实机测量；需要严格同步时应使用经板卡能力核对的多轴插补/CSP，而非在 Python 中宣称同步。
+
+后台停止会减速、关闭使能并恢复参数。竖直承载机构必须具备经过验证的自锁/抱闸及独立硬件急停，避免关闭使能、断电或驱动故障时坠落；本项目没有抱闸专用时序，不能替代该硬件功能。
+
+上线前需要在空载低幅条件验证：三个编号/方向/比例，中位和行程余量，两个端点与急停，丢包、暂停和进程退出，部分使能失败与停止确认，以及低频升降/俯仰/横滚时的实际位置和杆间误差。随后才逐步调整载荷、频率、幅度和误差阈值。
+
+## Python SDK 示例
 
 ```python
-import threading
-from core import EtherCATController
-from platform_control import run_three_axis
+import time
+from UdpControl.client import MotorClient
 
-controller = EtherCATController(log_dir='logs')
-devices = controller.scan()
-stop = threading.Event()
-report = run_three_axis(controller, devices, [1, 2, 3], stop=stop,
-                        rpm=5, acceleration=10, limit_degrees=30,
-                        host='127.0.0.1', port=5005, timeout=0.5)
+with MotorClient(port=5006) as client:  # 模拟端口；实机必须使用实测标定
+    client.hello()
+    client.request('scan')
+    client.wait_for(('idle',))
+    client.enable_platform([1, 2, 3], 'simulation-only-v1', reference_confirmed=True)
+    client.wait_for(('enabled',))
+    until = time.monotonic() + 5
+    while time.monotonic() < until:
+        client.pose(1, 0, 0)
+        time.sleep(1 / 30)
+    client.disable()
+    state = client.wait_for(('idle', 'fault'))
+    assert state['result']['all_disabled'] and not state['result']['cleanup_errors']
+    client.release()
 ```
 
-API 阻塞至会话结束，应放在后台线程；另一线程可调用 `stop.set()`。日志保留最后 10 秒 PDO 与累计目标更新次数，网络线程不读写 EtherCAT。原有 `cli.py` 仍只提供单次验证/调试。
+完整无硬件回归：`python -m unittest discover -v`（旧测试需要 requirements-legacy.txt）。平台专项：`python -m unittest -v test_platform_motion test_simulated_backend`，只使用标准库和模拟 APS，不访问真实电机。

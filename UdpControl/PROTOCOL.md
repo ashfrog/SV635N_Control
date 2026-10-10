@@ -40,6 +40,28 @@ adapter 可省略，使用后台当前控制卡配置；PCIe 后台仅接受匹�
 
 orders 须为不同的升序链路位置，不限定三轴。返回 `run_id`，立即开始心跳，直到 phase=enabled 再提交目标。使能不会自动移动，也不会自动执行上一运行目标。rpm 默认 60，acceleration_rpm_s 默认 120；两者为正的有限数值，使能就绪后可通过 profile 成对更新。
 
+## 三撑杆平台模式
+
+现有电机模式保持兼容。平台扩展使用同一 v1 协议、认证、控制权和去重规则，必须先完成后台机构配置。请求：
+
+```json
+{"v":1,"id":"pe1","type":"enable","session":"...","control_seq":2,"mode":"platform","orders":[1,2,3],"calibration_id":"实测标定版本","reference_confirmed":true}
+```
+
+`orders` 必须等于三个配置撑杆的升序编号。`reference_confirmed` 必须为布尔 true，表示操作员已核对物理中位；后台不能验证该人工声明。速度/加速度由后台平台配置生成，平台模式拒绝 target/profile，不能从客户端覆盖。配置平台后普通电机 enable 默认也被禁止，除非维护配置显式允许。
+
+取得 run_id 后开始心跳，等 phase=enabled 再持续发送最新姿态：
+
+```json
+{"v":1,"id":"pose1","type":"pose","session":"...","run_id":"...","seq":3,"pose":{"heave_mm":1,"pitch_deg":0.5,"roll_deg":-0.5}}
+```
+
+pose 对象只能包含这三个有限数值字段；毫米/度的坐标定义见根目录 UE接入.md。姿态共用 target 的独立序号通道，与 heartbeat 的序号互不覆盖。重复/乱序姿态不续期。有效新姿态同时续期网络心跳和姿态流计时；只有 heartbeat 不能续期姿态。使能完成后 pose_timeout_s 内必须收到首帧，默认 0.25 秒；过期的新姿态也不能恢复旧运行。客户端应发送 30～60 Hz，旧姿态不重试。
+
+当前运行的越界/无效姿态停止全部撑杆；旧 run_id 或未授权请求不能停止当前平台。所有姿态与组合撑杆行程都验证通过才更新目标，不截断单个撑杆。任意端点触发、配置传感器反馈失效或持续跟随误差超限，均停止全轴；驱动器故障沿用后台故障清理流程。停止/重启需要再次确认标定中位，不能把停止位置自动当成中位。
+
+state 新增 `control_mode` 和 `platform`：`configured/calibration_id/orders` 标识平台配置，`pose/lengths_mm` 是最近接受的姿态和期望杆长偏移，`commanded_deg` 是平滑器生成的最近中间轴目标，`actual_lengths_mm` 是由轴反馈换算的杆长偏移（未知为 null），`pose_age_s/pose_timeout_s` 表示姿态流年龄/超时。`targets_deg` 是最终轴目标，ACK 不表示最终姿态已到达。`hardware_backend=simulated` 只表示无硬件模拟，不应作为实机反馈。
+
 ## 心跳与目标
 
 从 enable 返回的 run_id 开始新运行。heartbeat、target、profile 各自使用严格递增 seq（0～2^53-1）；可共用全局递增计数，也可分开计数。后台分别记住三种消息的最后 seq。推荐持续 30～60 Hz 目标，目标静止时至少每 100 ms 发送 heartbeat。

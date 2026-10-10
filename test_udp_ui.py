@@ -221,10 +221,13 @@ class UITests(unittest.TestCase):
 
     def test_stop_with_enable_ack_in_flight_disables_that_run(self):
         held=[]
+        release_ack=threading.Event()
         send=self.server._send
         def hold_enable_ack(packet,peer):
-            if packet.get('type')=='ack' and packet.get('run_id') and not held:
-                held.append((packet,peer))
+            if (packet.get('type')=='ack' and packet.get('run_id') and not release_ack.is_set()
+                    and (not held or packet.get('id')==held[0][0]['id'])):
+                if not held:
+                    held.append((packet,peer))
             else:
                 send(packet,peer)
         self.server._send=hold_enable_ack
@@ -234,6 +237,7 @@ class UITests(unittest.TestCase):
                 self.pump(root,lambda:bool(held))
                 self.assertIsNone(ui.client.run_id)
                 ui.stop()
+                release_ack.set()
                 send(*held[0])
                 self.pump(root,lambda:self.service.phase=='idle' and ui.state.get('phase')=='idle' and not ui.pending)
                 self.assertIsNone(ui.auto_start)
@@ -241,6 +245,7 @@ class UITests(unittest.TestCase):
                 self.assertTrue(self.service.snapshot()['result']['all_disabled'])
                 self.assertFalse(any(s.targets for m in self.masters for s in m.slaves))
         finally:
+            release_ack.set()
             self.server._send=send
 
     def test_scan_or_device_failure_does_not_retry_auto_enable(self):
@@ -489,14 +494,14 @@ class UITests(unittest.TestCase):
             self.assertEqual(self.service.commands.profile()[1:],(40,80))
             ui.rpm.set('3500')  # Numeric entry may exceed the convenience slider range.
             ui.acceleration.set('7000')
-            ui.apply_profile()
             self.pump(root,lambda:(self.service.snapshot()['applied_profile'] or {}).get('rpm')==3500)
+            self.assertEqual(self.service.commands.profile()[1:],(3500,7000))
             self.assertEqual(ui.rpm.get(),'3500')
             self.assertEqual(self.service.commands.planned,(0,0,0))
             self.assertEqual(ui.client.run_id,run_id)
             self.assertFalse(any(s.targets for s in self.masters[-1].slaves))
-            self.assertTrue(ui.close_button.winfo_viewable())
-            self.assertLessEqual(ui.close_button.winfo_rooty()+ui.close_button.winfo_height(),
+            self.assertTrue(ui.stop_button.winfo_viewable())
+            self.assertLessEqual(ui.stop_button.winfo_rooty()+ui.stop_button.winfo_height(),
                                  root.winfo_rooty()+root.winfo_height())
             ui.stop()
             self.pump(root,lambda:self.service.phase=='idle')
@@ -536,12 +541,13 @@ class UITests(unittest.TestCase):
             self.assertIsNotNone(ui.target_editor)
             ui.target_editor.delete(0,'end')
             ui.target_editor.insert(0,'-4')
-            ui.send_targets()
             self.pump(root,lambda:self.service.commands.planned==(5,7,-4) and not ui.pending)
+            self.assertIsNotNone(ui.target_editor)  # Applying doesn't interrupt ongoing typing.
+            ui.target_editor.event_generate('<FocusOut>')
             self.assertIsNone(ui.target_editor)
             self.assertEqual(ui.tree.set('3','target'),'-4')
-            self.assertTrue(ui.close_button.winfo_viewable())
-            self.assertLessEqual(ui.close_button.winfo_rooty()+ui.close_button.winfo_height(),
+            self.assertTrue(ui.stop_button.winfo_viewable())
+            self.assertLessEqual(ui.stop_button.winfo_rooty()+ui.stop_button.winfo_height(),
                                  root.winfo_rooty()+root.winfo_height())
 
             box=ui.tree.bbox('1','target')
@@ -550,12 +556,19 @@ class UITests(unittest.TestCase):
             ui.target_editor.insert(0,'nan')
             number=self.service.commands.number
             with patch('UdpControl.debug_ui.messagebox.showerror') as error:
-                ui.send_targets()
+                self.pump(root,lambda:ui.target_edit_handle is None)
+                error.assert_not_called()  # Incomplete/invalid typing never sends a target or opens a dialog.
+                self.assertEqual(self.service.commands.number,number)
+                ui.commit_target_edit()
                 error.assert_called_once()
             self.assertEqual(self.service.commands.number,number)
+            ui.target_editor.delete(0,'end')
+            ui.target_editor.insert(0,'99')
             ui.stop()
             self.pump(root,lambda:self.service.phase=='idle' and ui.state.get('phase')=='idle')
             self.assertIsNone(ui.target_editor)
+            self.assertIsNone(ui.target_edit_handle)
+            self.assertEqual(self.service.commands.planned,(5,7,-4))
             self.assertEqual(str(ui.axis_box.cget('state')),'disabled')
         finally:
             ui.close()

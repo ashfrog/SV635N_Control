@@ -145,6 +145,28 @@ class MotorClient:
             self.sequence += 1
             return self.run_id, self.sequence
 
+    def enable_platform(self, orders, calibration_id, *, reference_confirmed=False):
+        """Arm only after the operator confirms the calibrated physical neutral."""
+        with self.control_lock:
+            reply = self.request('enable', orders=list(orders), mode='platform',
+                calibration_id=calibration_id, reference_confirmed=reference_confirmed)
+            with self.lock:
+                if self.backend_exiting.is_set():
+                    raise UDPError('Backend is shutting down')
+                self.run_id, self.sequence = reply['run_id'], -1
+                self.background_error = None
+            return reply
+
+    def pose(self, heave_mm, pitch_deg, roll_deg, *, expected_run_id=None):
+        """Stream fresh poses. Heartbeats alone do not keep a platform run alive."""
+        with self.lock:
+            if expected_run_id is not None and expected_run_id != self.run_id:
+                raise UDPError('Pose belongs to an ended run')
+            run_id, seq = self._next_sequence()
+        return self.request('pose', run_id=run_id, seq=seq,
+            pose=dict(heave_mm=heave_mm, pitch_deg=pitch_deg, roll_deg=roll_deg),
+            retries=1, retry_timeout=.08)
+
     def target(self, targets_deg, *, expected_run_id=None, retry_timeout=.15):
         with self.lock:
             if expected_run_id is not None and expected_run_id != self.run_id:
