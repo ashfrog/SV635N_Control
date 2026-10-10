@@ -1,6 +1,7 @@
 """PCIe-8332 regression using a fake APS API; no real card is initialized."""
 import ctypes as C
 import json
+import itertools
 import logging
 import os
 from pathlib import Path
@@ -49,7 +50,7 @@ class FakeAPS:
         self.status = {n: MDN for n in self.io}
         self.positions = {n: 1000. for n in self.io}
         self.velocity = {n: 0. for n in self.io}
-        self.board_params = {0: 0, 0x19: 1, 0x1A: 0, 0x109: 1, 0x28: 1}
+        self.board_params = {0: 0, 0x19: 1, 0x1A: 0, 0x109: 1, 0x28: 1, 0x25: 1}
         self.limit_mapping = {n: 0xE for n in self.io}
         self.emg_polarity_works = True
         self.axis_params = {n: 777. for n in self.io}
@@ -61,6 +62,10 @@ class FakeAPS:
         self.gear = 1
         self.module_axes = [10, 12, 14]
         self.module_ready = True
+        self.unmapped_io = None
+        self.start_errors = []
+        self.start_states = []
+        self.pending_states = []
         self.servo_delay = 0
         self.disable_reads = {}
         self.digital_inputs = {n: 0 for n in self.io}
@@ -80,13 +85,18 @@ class FakeAPS:
         elif name == 'APS_get_first_axisId':
             output(args[-2], 10); output(args[-1], 16)
         elif name == 'APS_start_field_bus':
+            if self.start_errors:
+                raise APSError(name, args, self.start_errors.pop(0))
             if self.fail_start:
                 raise ControlError('APS_start_field_bus 返回 APS 错误 -4012')
             self.bus = 6
             self.module_ready = True
+            self.pending_states = list(self.start_states)
         elif name == 'APS_stop_field_bus':
             self.bus = 1
         elif name == 'APS_get_field_bus_master_status':
+            if self.pending_states:
+                self.bus = self.pending_states.pop(0)
             output(args[-1], self.bus)
         elif name == 'APS_get_board_param':
             output(args[-1], self.board_params[args[1]])
@@ -132,6 +142,10 @@ class FakeAPS:
             output(args[7], self.input_bits)
         elif name == 'APS_motion_io_status':
             axis = args[0]
+            if not self.module_ready and self.unmapped_io is not None:
+                if self.unmapped_io < 0:
+                    raise APSError(name, args, self.unmapped_io)
+                return self.io.get(axis, 0) & ~ONLINE
             if axis not in self.io:
                 raise APSError(name, args, -1009)
             if self.disable_reads.get(axis, 0):
@@ -739,6 +753,126 @@ class ControllerTests(unittest.TestCase):
         names = [n for n, _ in self.api.calls]
         self.assertLess(names.index('APS_stop_field_bus'), names.index('APS_scan_field_bus'))
         self.assertLess(names.index('APS_scan_field_bus'), names.index('APS_start_field_bus'))
+
+    def test_cold_boot_op_with_no_axis_map_initializes_without_mcpro2(self):
+        for missing_status in (0, -1009):
+            with self.subTest(missing_status=missing_status):
+                self.api = FakeAPS()
+                self.api.bus, self.api.module_ready = 6, False
+                self.api.unmapped_io = missing_status
+                self.c.api_factory = lambda: self.api
+                devices = self.c.scan()
+                self.assertEqual([d.axis_id for d in devices], [10, 12, 14])
+                names = [name for name, _ in self.api.calls]
+                self.assertEqual(names.count('APS_start_field_bus'), 1)
+                self.assertNotIn('APS_scan_field_bus', names)
+                self.assertNotIn('APS_set_servo_on', names)
+                self.assertNotIn('APS_ptp_all', names)
+                self.assertEqual(self.api.board_params[0x25], 0)
+                self.assertFalse(self.c.close())
+                self.assertEqual(self.api.board_params, self.api.initial_board_params)
+
+    def test_cold_boot_missing_online_bit_still_rejects_servo_on(self):
+        self.api.bus, self.api.module_ready, self.api.unmapped_io = 6, False, 0
+        self.api.io[12] |= SVON
+        with self.assertRaisesRegex(ControlError, '已使能'):
+            self.c.scan()
+        self.assertFalse(any(n in ('APS_start_field_bus', 'APS_stop_field_bus', 'APS_set_board_param')
+                             for n, _ in self.api.calls))
+
+    def test_cold_boot_map_is_validated_after_initialization(self):
+        self.api.bus, self.api.module_ready, self.api.unmapped_io = 6, False, -1009
+        self.api.io[12] &= ~ONLINE
+        with self.assertRaisesRegex(ControlError, '不在线'):
+            self.c.scan()
+        self.assertFalse(self.c.initialized)
+        self.assertEqual(sum(n == 'APS_start_field_bus' for n, _ in self.api.calls), 1)
+        self.assertFalse(any(n == 'APS_set_servo_on' for n, _ in self.api.calls))
+
+    def test_saved_eni_failure_rebuilds_once_then_starts_without_servo_enable(self):
+        for code in (-1011, -4012, -4013, -4062):
+            with self.subTest(code=code):
+                self.api = FakeAPS()
+                self.api.start_errors = [code]
+                self.c.api_factory = lambda: self.api
+                self.assertEqual(len(self.c.scan()), 3)
+                names = [n for n, _ in self.api.calls]
+                self.assertEqual(names.count('APS_scan_field_bus'), 1)
+                self.assertEqual(names.count('APS_start_field_bus'), 2)
+                self.assertLess(names.index('APS_stop_field_bus'), names.index('APS_scan_field_bus'))
+                self.assertNotIn('APS_set_servo_on', names)
+                self.assertFalse(self.c.close())
+
+    def test_op_attachment_does_not_rebuild_eni_on_failure(self):
+        self.api.bus, self.api.module_ready, self.api.unmapped_io = 6, False, 0
+        self.api.start_errors = [-4012]
+        with self.assertRaisesRegex(APSError, '-4012'):
+            self.c.scan()
+        self.assertFalse(any(n == 'APS_scan_field_bus' for n, _ in self.api.calls))
+
+    def test_start_waits_for_op_transition(self):
+        self.api.start_states = [3, 4, 5, 6]
+        self.assertEqual(len(self.c.scan()), 3)
+        self.assertEqual(self.api.bus, 6)
+
+    def test_master_never_reaches_op_times_out_with_bounded_retries(self):
+        self.api.start_states = [5]
+        clock = itertools.count(0, 3)
+        with patch('aps_backend.time.monotonic', side_effect=lambda: next(clock)), \
+             patch('aps_backend.time.sleep'):
+            with self.assertRaisesRegex(ControlError, '未进入 OP.*状态 5'):
+                self.c.scan()
+        self.assertEqual(sum(n == 'APS_start_field_bus' for n, _ in self.api.calls), 3)
+        self.assertFalse(self.c.initialized)
+        self.assertEqual(self.api.board_params, self.api.initial_board_params)
+
+    def test_eni_recovery_is_not_repeated_after_another_transient_failure(self):
+        self.api.start_errors = [-4012, -4004, -4012]
+        with self.assertRaisesRegex(APSError, '-4012'):
+            self.c.scan()
+        names = [n for n, _ in self.api.calls]
+        self.assertEqual(names.count('APS_scan_field_bus'), 1)
+        self.assertEqual(names.count('APS_initial'), 2)
+        self.assertEqual(self.api.board_params, self.api.initial_board_params)
+
+    def test_transient_start_failure_reopens_session_and_restores_parameters(self):
+        self.api.start_errors = [-4004]
+        self.assertEqual(len(self.c.scan()), 3)
+        names = [n for n, _ in self.api.calls]
+        self.assertEqual(names.count('APS_initial'), 2)
+        self.assertEqual(names.count('APS_start_field_bus'), 2)
+        self.assertNotIn('APS_scan_field_bus', names)
+        self.assertNotIn('APS_set_servo_on', names)
+        self.assertFalse(self.c.close())
+        self.assertEqual(self.api.board_params, self.api.initial_board_params)
+
+    def test_persistent_transient_failure_has_bounded_retries(self):
+        self.api.start_errors = [-4004] * 3
+        with self.assertRaisesRegex(APSError, '-4004'):
+            self.c.scan()
+        self.assertEqual(sum(n == 'APS_initial' for n, _ in self.api.calls), 3)
+        self.assertFalse(self.c.initialized)
+        self.assertEqual(self.api.board_params, self.api.initial_board_params)
+
+    def test_failed_cleanup_prevents_start_retry(self):
+        self.api.start_errors = [-4004]
+        original = self.api.call
+        def fail_close(name, *args):
+            if name == 'APS_stop_field_bus':
+                raise APSError(name, args, -4041)
+            return original(name, *args)
+        self.api.call = fail_close
+        with self.assertRaisesRegex(ControlError, '清理失败'):
+            self.c.scan()
+        self.assertEqual(sum(n == 'APS_initial' for n, _ in self.api.calls), 1)
+
+    def test_idle_bus_leaving_op_can_be_rescanned_without_process_restart(self):
+        self.c.scan()
+        self.api.bus = 3
+        self.api.module_ready = False
+        self.assertEqual(len(self.c.scan()), 3)
+        self.assertEqual(sum(n == 'APS_initial' for n, _ in self.api.calls), 2)
+        self.assertFalse(any(n == 'APS_set_servo_on' for n, _ in self.api.calls))
 
     def test_op_bus_without_session_map_reconnects_three_unwired_emg_axes(self):
         self.api.bus, self.api.module_ready = 6, False

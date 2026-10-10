@@ -28,6 +28,11 @@ ALM, PEL, MEL, EMG = 1, 2, 4, 16
 IO_FAULTS = ALM | PEL | MEL | EMG | (1 << 10) | (1 << 11) | (1 << 12)
 LIMIT_MAP_EN = 0x5D
 SD_DEC = 7
+AUTO_CONNECT = 0x25
+
+
+class BusNotReady(ControlError):
+    """A start was acknowledged but the master is still transitioning."""
 
 
 class AsyncCall(C.Structure):
@@ -198,6 +203,7 @@ class PCIe8332Controller:
         self.saved_board = {}
         self.worker_id = None
         self.pdo_buffers = {}
+        self.eni_rebuilt = False
 
     def adapters(self):
         # Configuration labels only. Enumeration here never calls hardware from UDP thread.
@@ -216,9 +222,14 @@ class PCIe8332Controller:
     def _open(self):
         self._thread()
         if self.initialized:
-            if self.bus_state() != BUS_OP:
-                raise ControlError('PCIe-8332 总线未处于 OP；请停止并重启后台后重新扫描。')
-            return
+            if self.bus_state() == BUS_OP:
+                return
+            # Only scan/enable preparation enters here; a motion fault is still
+            # latched by MotorService. Reopen a lost idle bus on an explicit scan.
+            LOG.warning('Idle APS bus left OP; reopening SDK session for scan')
+            errors = self.close()
+            if errors:
+                raise ControlError(f'重新初始化前 APS 清理失败：{errors}')
         lock_context = adapter_lock('APS168-library')
         lock_context.__enter__()
         self.lock_context = lock_context
@@ -233,7 +244,9 @@ class PCIe8332Controller:
             card = self.api.value('APS_get_card_name', self.board, kind=I32)
             if card != CARD_PCIE_8332:
                 raise ControlError(f'Card {self.board} 类型为 {card}，需要 PCIe-8332 (25)。')
-            already_op = self.bus_state() == BUS_OP
+            initial_state = self.bus_state()
+            LOG.info('APS Card %s initialized: master_state=%s', self.board, initial_state)
+            already_op = initial_state == BUS_OP
             if already_op:
                 # Card boot-time auto-connect may already be OP. Adopt it only
                 # after validating topology and verifying EVERY axis servo-off.
@@ -249,31 +262,66 @@ class PCIe8332Controller:
             for parameter, value in [(0x19, 0), (0x1A, 1), (0x109, 0), (0x28, 0)]:
                 self.saved_board[parameter] = self.api.value('APS_get_board_param', self.board, parameter, kind=I32)
                 self.api.call('APS_set_board_param', self.board, parameter, value)
-            if self.options['regenerate_eni']:
+            if self.options['regenerate_eni'] and not self.eni_rebuilt:
                 if already_op:
                     self.api.call('APS_stop_field_bus', self.board, 0)
                     already_op = False
                 self.api.call('APS_scan_field_bus', self.board, 0)
+                self.eni_rebuilt = True
             # A failed start can leave a partial bus; close must still attempt stop.
             self.started = True
             if not already_op:
-                self.api.call('APS_start_field_bus', self.board, 0, self.options['start_axis_id'])
-            if self.bus_state() != BUS_OP:
-                raise ControlError('APS_start_field_bus 完成后总线没有进入 OP。')
+                self._start_bus(rebuild_eni=not self.options['regenerate_eni'])
+            self._wait_bus_op()
             if not self.options['emg_input_connected']:
                 self._configure_unwired_emg()
-        except BaseException:
+        except BaseException as exc:
             errors = self.close()
             if errors:
                 LOG.error('APS opening cleanup failed: %s', errors)
+                raise ControlError(f'{exc}；APS 初始化清理失败：{errors}') from exc
             raise
+
+    def _wait_bus_op(self):
+        deadline = time.monotonic() + 2
+        while True:
+            state = self.bus_state()
+            if state == BUS_OP:
+                return
+            if time.monotonic() >= deadline:
+                raise BusNotReady(f'现场总线启动后未进入 OP（当前状态 {state}），请核对电机供电和网线。')
+            time.sleep(.02)
+
+    def _start_bus(self, *, rebuild_eni=False):
+        # The firmware auto-connect shortcut can leave OP with no DLL axis map
+        # after a cold boot. Use the complete SDK start path, without saving flash.
+        if AUTO_CONNECT not in self.saved_board:
+            self.saved_board[AUTO_CONNECT] = self.api.value(
+                'APS_get_board_param', self.board, AUTO_CONNECT, kind=I32)
+        self.api.call('APS_set_board_param', self.board, AUTO_CONNECT, 0)
+        self.started = True  # Also clean up a partially acknowledged start.
+        try:
+            self.api.call('APS_start_field_bus', self.board, 0, self.options['start_axis_id'])
+        except APSError as exc:
+            # Recover absent/stale ENI once on a stopped bus; never rebuild a
+            # pre-existing OP bus just because its process-local map is missing.
+            if (not rebuild_eni or self.eni_rebuilt or exc.function != 'APS_start_field_bus'
+                    or exc.code not in (-1011, -1012, -1014, -4012, -4013, -4014, -4062)):
+                raise
+            LOG.warning('Starting saved ENI failed (%s); scanning bus and rebuilding ENI once', exc)
+            self.api.call('APS_stop_field_bus', self.board, 0)
+            self.eni_rebuilt = True
+            self.api.call('APS_scan_field_bus', self.board, 0)
+            self.api.call('APS_start_field_bus', self.board, 0, self.options['start_axis_id'])
+        self._wait_bus_op()
 
     def _attach_running_bus(self):
         """Attach a fresh APS session to an already-OP single-axis bus.
 
         OP is a card state; it does not prove this DLL session has populated
-        its slave/axis map. SDK initialization mode takes effect at bus start.
-        Do not rebuild that map while any existing axis is enabled.
+        its slave/axis map. Until start, all axis slots may report -1009 or
+        ONLINE=0. Check every slot for servo-on, then initialize the map and
+        validate every mapped slave in _devices before publishing scan results.
         """
         info, count = (I32 * 1)(), I32()
         self.api.call('APS_get_field_bus_last_scan_info', self.board, 0, info, 1, C.byref(count))
@@ -287,21 +335,18 @@ class PCIe8332Controller:
             try:
                 io = self.api.call('APS_motion_io_status', axis)
             except APSError as exc:
-                # Reserved slots report SlaveNotOPState. Only accept these if
-                # the remaining ONLINE axes account for EVERY scanned slave.
+                # Reserved slots and a wholly uninitialized session both report
+                # SlaveNotOPState. This is not a usable per-drive ONLINE sample.
                 if exc.function == 'APS_motion_io_status' and exc.code == -1009:
                     continue
                 raise
             if io & SVON:
                 raise ControlError(f'Axis {axis} 已使能；先停止并关闭使能，未重新接入总线。')
             online += bool(io & ONLINE)
-        if online != info[0]:
+        if online not in (0, info[0]):
             raise ControlError(f'已运行总线有 {info[0]} 个从站，但只能核对 {online} 个在线未使能轴；未重新接入。')
-        LOG.info('Attaching APS session to existing OP bus: %s verified servo-off axes', online)
-        self.started = True
-        self.api.call('APS_start_field_bus', self.board, 0, self.options['start_axis_id'])
-        if self.bus_state() != BUS_OP:
-            raise ControlError('重新接入 APS 会话后总线没有处于 OP。')
+        LOG.info('Initializing missing APS session map: slaves=%s online_axis_slots=%s', info[0], online)
+        self._start_bus()
 
     def _configure_unwired_emg(self):
         # Explicit commissioning configuration only. Never auto-clear an EMG
@@ -394,8 +439,23 @@ class PCIe8332Controller:
         return devices
 
     def scan(self):
-        self._open()
-        return self._devices()
+        self.eni_rebuilt = False
+        for attempt in range(1, 4):
+            try:
+                self._open()
+                return self._devices()
+            except Exception as exc:
+                errors = self.close()
+                if errors:
+                    raise ControlError(f'{exc}；APS 扫描清理失败：{errors}') from exc
+                transient = isinstance(exc, BusNotReady) or (
+                    isinstance(exc, APSError) and (exc.code in
+                        (-5, -9, -15, -1008, -1009, -4003, -4004, -4005, -4042, -4043, -4044)
+                        or (exc.code == -41 and exc.function == 'APS_get_field_bus_module_info')))
+                if not transient or attempt == 3:
+                    raise
+                LOG.warning('APS startup/scan attempt %s/3 failed: %s; retrying fresh session', attempt, exc)
+                time.sleep(.25)
 
     def read_inputs(self, devices, *, bus_ok=None, io_status=None):
         """Read cyclic PDO memory, never a blocking SDO in the motion loop.

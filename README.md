@@ -19,7 +19,7 @@ py -3.12 -m venv .venv
 
 连续控制：点击“获取调试控制权”后自动扫描、选中并使能全部扫描到的电机，保持当前位置，无需运行条件确认选项；停止后也可手动选择轴再开启连续使能。速度与加减速度无软件上下限，只接受正的有限数值；默认值仍为 60 rpm / 120 rpm/s。使能期间可拖动速度/加减速度滑块，或数值输入后按 Enter 动态更新全部使能轴，保持各轴位置目标。列表“目标偏移 °”支持每轴独立输入，滑块可选择单轴或全部使能轴；单轴更新保持其他轴原目标。新指令不等待上一目标到位，累计角度不设上限。轨迹和 EtherCAT 周期由控制卡执行，Python 通过 APS 提交绝对位置覆盖目标。UDP 心跳超时和关闭使能都会停止并恢复参数；实际操作见 [客户端说明](UdpControl/README.md)。
 
-后台默认使用 ADLINK `PCIe-8332:0`，启动后自动扫描电机，界面自动显示控制卡与扫描结果；最高速度和加减速度滑块最大值均为 3000。首次使用先在 MCPro2 配好 ESI/ENI 并关闭 MCPro2；具体板卡配置和位置单位见 [后台说明](后台说明.md)。`continuous_control.py` 保留旧普通网卡运动 API。此前 `platform_control.py` 与 `UE/` 组件保留为旧协议参考，与新后台 v1 协议不兼容。完整无硬件回归（需安装 `requirements-legacy.txt`）：
+后台默认使用 ADLINK `PCIe-8332:0`，启动后自行初始化现场总线并扫描电机，日常无需先启动 MCPro2；界面自动显示控制卡与扫描结果。冷启动会补建 APS 会话轴映射，暂时性失败最多尝试 3 次，缺失或过期 ENI 时自动扫描生成一次。首次使用需安装正确的 SV635N ESI，并关闭 MCPro2。最高速度和加减速度滑块最大值均为 3000；具体板卡配置和位置单位见 [后台说明](后台说明.md)。`continuous_control.py` 保留旧普通网卡运动 API。此前 `platform_control.py` 与 `UE/` 组件保留为旧协议参考，与新后台 v1 协议不兼容。完整无硬件回归（需安装 `requirements-legacy.txt`）：
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest -v test_aps_backend test_udp_layout test_udp_protocol test_udp_service test_udp_ui test_continuous_control test_app_continuous test_platform_control
