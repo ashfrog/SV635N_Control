@@ -17,8 +17,9 @@ from aps_backend import validate_options
 from udp_server import UDPServer, bind_socket, encode, decode, PROTOCOL_VERSION, MAX_PACKET
 from motor_service import MotorService
 from platform_motion import validate_platform
+from runtime_paths import application_dir
 
-BASE=Path(__file__).resolve().parent
+BASE=application_dir(__file__)
 
 
 def load_config(path):
@@ -73,10 +74,14 @@ def existing_backend(config, timeout=2):
 
 def launch_client(config, config_path, port=None):
     executable = Path(sys.executable)
-    windowed = executable.with_name('pythonw.exe')
-    if windowed.exists():
-        executable = windowed
-    return subprocess.Popen([str(executable),'-m','UdpControl',
+    if getattr(sys, 'frozen', False):
+        command = [str(executable), '--client']
+    else:
+        windowed = executable.with_name('pythonw.exe')
+        if windowed.exists():
+            executable = windowed
+        command = [str(executable), '-m', 'UdpControl']
+    return subprocess.Popen(command+[
         '--host',client_host(config),'--port',str(port or config['port']),
         '--config',str(config_path or BASE/'backend.config.json')],
         cwd=BASE,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)

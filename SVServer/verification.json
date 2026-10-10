@@ -1,0 +1,5 @@
+{
+  "relocated_simulation_and_platform_udp": "passed",
+  "relocated_backend_tray_external_config_and_logs": "passed",
+  "frozen_client_read_only_connect_and_graceful_shutdown": "passed"
+}

@@ -2,6 +2,8 @@
 
 SV635N / ADLINK PCIe-8332 电机后台（Python 源码版），通过 UDP 接收单轴/多轴连续运动目标，提供托盘入口和独立控制客户端。
 
+便携 EXE 发布目录为 [SVServer](SVServer/README.md)：双击 `SVServer/SVServer.exe` 或 `SVServer/启动服务.cmd` 启动，复制整个目录即可部署，无需安装 Python。控制卡驱动和 APS SDK 仍需安装。构建方法：安装 `requirements-build.txt` 后运行 `python build_svserver.py`；托盘和客户端各自运行在独立进程中。
+
 双击根目录的 `启动源码.cmd` 或 `启动后台.cmd` 启动托盘后台，控制界面由 `UdpControl/启动界面.cmd` 或托盘“打开控制界面”启动。运行环境使用本项目的 `.venv`，不依赖临时工作目录。
 
 首次使用或更换电脑时，安装 Python 3.11～3.13 x64 、PCIe-8332 驱动及 APS-SDK-2.3.00.250902，然后在项目根目录执行：

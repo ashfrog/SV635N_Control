@@ -3,6 +3,7 @@ import argparse
 import gc
 import json
 import logging
+import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 import tkinter as tk
@@ -10,7 +11,7 @@ import tkinter as tk
 from .debug_ui import DebugWindow
 from .instance import PanelInstance
 
-BASE = Path(__file__).resolve().parent
+BASE = Path(sys.executable).resolve().parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parent
 
 
 def load_config(path):
@@ -31,7 +32,7 @@ def load_config(path):
 
 def main():
     parser = argparse.ArgumentParser(description='独立 UDP 电机控制界面')
-    parser.add_argument('--config', type=Path, default=BASE/'config.json')
+    parser.add_argument('--config', type=Path, default=BASE/('backend.config.json' if getattr(sys, 'frozen', False) else 'config.json'))
     parser.add_argument('--host', help='后台 UDP 地址，覆盖配置')
     parser.add_argument('--port', type=int, help='后台 UDP 端口，覆盖配置')
     args = parser.parse_args()

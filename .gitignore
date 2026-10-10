@@ -6,3 +6,7 @@ settings.json
 UdpControl/config.json
 backend.config.json
 *.7z
+.build/
+SVServer/_internal/
+SVServer/*.exe
+SVServer/backend.config.json

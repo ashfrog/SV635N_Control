@@ -12,6 +12,7 @@ from backend import load_config
 from motor_service import MotorService
 from platform_motion import PlatformGeometry
 from udp_server import UDPServer
+from runtime_paths import application_dir
 
 
 class SimulatedController:
@@ -93,7 +94,7 @@ class SimulatedController:
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--config',type=Path,default=Path(__file__).with_name('backend.platform.example.json'))
+    parser.add_argument('--config',type=Path,default=application_dir(__file__)/'backend.platform.example.json')
     parser.add_argument('--port',type=int,default=5006)
     args=parser.parse_args()
     config=load_config(args.config)

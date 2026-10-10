@@ -1,0 +1,36 @@
+{
+  "host": "127.0.0.1",
+  "port": 5005,
+  "adapter": "PCIe-8332:0",
+  "heartbeat_timeout_s": 0.5,
+  "auth_key": "",
+  "aps": {
+    "board_id": 0,
+    "bus_no": 0,
+    "start_axis_id": 0,
+    "extension_limits": {"0": "di2", "1": "di2", "2": "di2"},
+    "retraction_limits": {"0": "di1", "1": "di1", "2": "di1"},
+    "limit_inputs_connected": true,
+    "emg_input_connected": true
+  },
+  "platform": {
+    "enabled": false,
+    "calibration_id": "simulation-only-v1",
+    "allow_motor_debug": false,
+    "require_endpoint_sensors": true,
+    "max_heave_mm": 10,
+    "max_pitch_deg": 3,
+    "max_roll_deg": 3,
+    "max_leg_speed_mm_s": 5,
+    "max_leg_acceleration_mm_s2": 10,
+    "max_tracking_error_mm": 5,
+    "tracking_timeout_s": 0.3,
+    "pose_timeout_s": 0.25,
+    "command_interval_s": 0.02,
+    "legs": [
+      {"order": 1, "x_mm": 200, "y_mm": 0, "mm_per_rev": 5, "extension_sign": 1, "min_mm": -20, "max_mm": 20},
+      {"order": 2, "x_mm": -100, "y_mm": 150, "mm_per_rev": 5, "extension_sign": 1, "min_mm": -20, "max_mm": 20},
+      {"order": 3, "x_mm": -100, "y_mm": -150, "mm_per_rev": 5, "extension_sign": 1, "min_mm": -20, "max_mm": 20}
+    ]
+  }
+}
