@@ -61,6 +61,7 @@ class UITests(unittest.TestCase):
             self.assertEqual(self.service.orders,[1,2,3,4])
             self.assertEqual(ui.selected,{1,2,3,4})
             self.assertFalse(hasattr(ui,'ready_box'))
+            self.assertFalse(hasattr(ui,'enable_button'))
             self.assertEqual(self.service.commands.planned,(0,0,0,0))
             self.assertFalse(any(s.targets for m in self.masters for s in m.slaves))
             self.assertEqual(ui.client.run_id,self.service.run_id)
@@ -73,6 +74,39 @@ class UITests(unittest.TestCase):
                 time.sleep(.01)
             self.assertEqual(self.service.phase,'idle')
             self.assertEqual(len(self.masters),count)
+
+    def test_same_control_button_restores_all_motors_after_explicit_stop(self):
+        with self.window() as (root,ui):
+            ui.claim()
+            self.pump(root,lambda:ui.state.get('phase')=='enabled' and not ui.pending and not ui.auto_start)
+            previous = ui.client.run_id
+            session = ui.client.session
+            ui.stop()
+            self.pump(root,lambda:ui.state.get('phase')=='idle' and not ui.pending and not ui.stop_pending)
+            self.assertEqual(str(ui.claim_button.cget('state')),'normal')
+            ui.claim_button.invoke()
+            self.pump(root,lambda:ui.state.get('phase')=='enabled' and not ui.pending and not ui.auto_start)
+            self.assertEqual(ui.client.session,session)
+            self.assertNotEqual(ui.client.run_id,previous)
+            self.assertEqual(self.service.orders,[1,2,3,4])
+            self.assertFalse(any(s.targets for m in self.masters for s in m.slaves))
+
+    def test_scan_results_show_drive_alarm_in_hex_without_axis_feedback(self):
+        with self.window() as (root,ui):
+            ui.render(dict(phase='idle',devices=[dict(order=3,id=2,name='SV635N',
+                           motor_code=14101,position=0,error_code=0x5443)],axes=[]))
+            self.assertEqual(ui.tree.set('3','state'),'报警 0x5443')
+
+    def test_idle_control_keeps_continuous_enable_without_ui_pumping_or_targets(self):
+        with self.window() as (root,ui):
+            ui.claim()
+            self.pump(root,lambda:ui.state.get('phase')=='enabled' and not ui.pending and not ui.auto_start)
+            run_id = ui.client.run_id
+            time.sleep(1.1)  # Independent heartbeat must survive a blocked/minimized UI.
+            self.assertEqual(self.service.phase,'enabled')
+            self.assertEqual(self.service.run_id,run_id)
+            self.assertTrue(self.service.snapshot()['enabled'])
+            self.assertFalse(any(s.targets for m in self.masters for s in m.slaves))
 
     def test_stop_during_auto_scan_prevents_later_enable(self):
         started,resume=threading.Event(),threading.Event()

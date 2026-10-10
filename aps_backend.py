@@ -491,7 +491,7 @@ class PCIe8332Controller:
                 if length.value != 32:
                     raise ControlError(f'60FD PDO 长度为 {length.value} bit，需要 32 bit')
                 raw = int.from_bytes(bytes(data), 'little')
-                sensor.update(valid=True, digital_inputs=raw, positive_limit=bool(raw & 2),
+                sensor.update(valid=True, digital_inputs=raw, motion_io_status=io, positive_limit=bool(raw & 2),
                               negative_limit=bool(raw & 1), di1=bool(raw & (1 << 16)),
                               di2=bool(raw & (1 << 17)))
                 for prefix, _, _, sign in d.endpoints:
@@ -509,11 +509,13 @@ class PCIe8332Controller:
         return result
 
     @staticmethod
-    def check_limit_feedback(d, sensor):
+    def check_limit_feedback(d, sensor, *, allow_conflict=False):
         if d.endpoints and not sensor['valid']:
             raise ControlError(f'Axis {d.axis_id} 端点限位反馈失效：{sensor.get("error")}')
-        if sensor.get('conflict'):
-            raise ControlError(f'Axis {d.axis_id} 推出与缩回限位同时触发；请核对接线、极性和 DI 功能。')
+        if sensor.get('conflict') and not allow_conflict:
+            raise ControlError(f'Axis {d.axis_id} 推出与缩回限位同时触发；'
+                               f'60FD={sensor.get("digital_inputs", 0):#x}，'
+                               f'APS_IO={sensor.get("motion_io_status", 0):#x}；请核对接线、极性和 DI 功能。')
 
     def close(self):
         self._thread()
@@ -546,6 +548,7 @@ class PCIe8332Controller:
         selected, last_targets = [], {}
         stale_abnormal_stops = set()
         limit_stops = set()
+        conflict_stops = set()
         blocked_message = False
         history, trace = deque(maxlen=1000), deque(maxlen=1000)
         active = None
@@ -575,6 +578,25 @@ class PCIe8332Controller:
             if enabled and not io & SVON:
                 raise ControlError(f'Axis {d.axis_id} 运行期间退出使能。')
             return io
+        def hold_conflict(d, sensor, all_limits):
+            nonlocal active, blocked_message
+            if not sensor.get('conflict'):
+                conflict_stops.discard(d.axis_id)
+                return False
+            io_checked(d, True, io=sensor['motion_io_status'])
+            if d.axis_id not in conflict_stops:
+                api.call('APS_stop_move', d.axis_id)
+                conflict_stops.add(d.axis_id)
+                limit_stops.add(d.axis_id)
+                last_targets.pop(d.axis_id, None)
+                if active:
+                    active['limit_stopped'] = True
+                    active = None
+                callback(dict(kind='limit_blocked', limits=dict(all_limits),
+                              text=f'电机 {d.order} 两端限位同时触发，已停止运动并保持使能；'
+                                   '核对传感器后提交新目标，旧目标不会恢复'))
+                blocked_message = True
+            return True
         try:
             check_stop()
             current = self.scan()
@@ -585,7 +607,11 @@ class PCIe8332Controller:
             selected = [refreshed[n] for n in commands.orders]
             preflight = self.read_inputs(selected)
             for d in selected:
+                if d.error_code or d.statusword & 8:
+                    raise ControlError(f'电机 {d.order}（Axis {d.axis_id}）驱动报警 0x{d.error_code:04X}；'
+                                       '请处理报警后重新扫描并恢复控制。')
                 self.check_limit_feedback(d, preflight[d.order])
+                io_checked(d)
             profile_revision, rpm, acceleration_rpm_s = commands.profile()
             def native_profile(rpm, acceleration_rpm_s):
                 values = {d.axis_id: (d.units_per_rev * (rpm / 60),
@@ -605,8 +631,6 @@ class PCIe8332Controller:
                 if d.endpoints:
                     self.check_limit_feedback(d, self.read_inputs([d])[d.order])
                 io_checked(d)
-                if d.error_code or d.statusword & 8:
-                    raise ControlError(f'Axis {d.axis_id} 存在驱动报警 {d.error_code:#x}。')
                 velocity, acceleration = profile_values[d.axis_id]
                 saved_deceleration[d.axis_id] = api.value('APS_get_axis_param_f', d.axis_id, SD_DEC)
                 api.call('APS_set_axis_param_f', d.axis_id, SD_DEC, acceleration)
@@ -657,12 +681,14 @@ class PCIe8332Controller:
                 limits.update(self.read_inputs(selected, bus_ok=True, io_status=io_status))
                 for d in selected:
                     sensor = limits[d.order]
-                    self.check_limit_feedback(d, sensor)
+                    self.check_limit_feedback(d, sensor, allow_conflict=True)
                     io = io_checked(d, True, io=io_status[d.axis_id])
                     status = api.call('APS_motion_status', d.axis_id)
                     if status_due or sensor.get('triggered') or sensor.get('retraction_triggered'):
                         positions[d.axis_id] = api.value('APS_get_position_f', d.axis_id)
                     position = positions[d.axis_id]
+                    if hold_conflict(d, sensor, limits):
+                        status = api.call('APS_motion_status', d.axis_id)
                     for prefix, label, _, direction in d.endpoints:
                         trigger_key = 'triggered' if prefix == 'extension' else 'retraction_triggered'
                         if (sensor.get(trigger_key) and d.axis_id not in limit_stops and
@@ -709,7 +735,8 @@ class PCIe8332Controller:
                     profile_values = native_profile(new_rpm, new_acceleration)
                     fresh_limits = self.read_inputs(selected)
                     for d in selected:
-                        self.check_limit_feedback(d, fresh_limits[d.order])
+                        self.check_limit_feedback(d, fresh_limits[d.order], allow_conflict=True)
+                        hold_conflict(d, fresh_limits[d.order], {**limits, **fresh_limits})
                     for d in selected:
                         check_stop()
                         velocity, acceleration = profile_values[d.axis_id]
@@ -751,7 +778,10 @@ class PCIe8332Controller:
                     blocked = []
                     for d, target in zip(selected, targets):
                         sensor = fresh_limits[d.order]
-                        self.check_limit_feedback(d, sensor)
+                        self.check_limit_feedback(d, sensor, allow_conflict=True)
+                        if hold_conflict(d, sensor, {**limits, **fresh_limits}):
+                            blocked.append(d.order)
+                            continue
                         if d.endpoints:
                             position = api.value('APS_get_position_f', d.axis_id)
                             if any(sensor['triggered' if prefix == 'extension' else 'retraction_triggered']

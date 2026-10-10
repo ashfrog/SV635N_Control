@@ -121,8 +121,14 @@ class MotorService:
             known = {d.order: d for d in self.devices}
             if any(n not in known for n in orders):
                 raise ControlError('请先扫描并使用扫描结果中的链路位置。')
-            if any(known[n].motor_code != 14101 or known[n].error_code for n in orders):
-                raise ControlError('所选电机的型号或报警状态未通过核对。')
+            for n in orders:
+                device = known[n]
+                if device.motor_code != 14101:
+                    raise ControlError(f'电机 {n} 型号 {device.motor_code} 不支持，需要 SV635N / 14101。')
+                # APS worker rescans and validates current drive alarms before
+                # enabling ANY axis. A previous scan's alarm can already be gone.
+                if not self.hardware and device.error_code:
+                    raise ControlError(f'电机 {n} 驱动报警 0x{device.error_code:04X}；请处理报警后重新扫描。')
             self.commands, self.orders = commands, list(orders)
             self.stop_event = threading.Event()
             self.run_id, self.sequence = uuid.uuid4().hex, -1

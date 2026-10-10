@@ -92,4 +92,4 @@ disable 不要求 seq，匹配当前 run_id 就优先请求停止。ack 仅表�
 
 PCIe 后台新增 `state.limits`（扫描后持续更新，包括未使能/未选中轴）：每项包含 `order`、`input`（推出端 `di1`/`di2` 或 null）、`state`（`triggered`/`clear`/`unconfigured`/`unavailable`）、`valid`、`triggered`（布尔或 null）、`extension_sign`（APS 原生位置方向 ±1；未配置为 0）、`digital_inputs`（60FD 原始值）、`positive_limit`、`negative_limit`、`di1`、`di2`。双端配置另有 `retraction_input`、`retraction_sign`、`retraction_state`、`retraction_triggered`，含义与推出端相同；未配置缩回端时 `retraction_state:"no_sensor"`。`conflict:true` 表示两端同时触发。未知反馈不代表未触发；通信新鲜度仍由接收时间判断。`input_configuration` 包含逐轴 `extension_limits` / `retraction_limits`，配置见根目录后台说明。
 
-推出端限位触发时只允许缩回，缩回端触发时只允许推出。朝已知触发端运动的请求返回 `ok:false`；若请求入队后才触发，由硬件线程丢弃整条多轴目标并更新 `state.message`，先前 ACK 不代表已执行。旧目标不会在传感器解除后自动恢复；触发后需显式提交离开该端的反向目标，并继续心跳。两端同时触发使运行进入 `fault`，需要核对接线/极性并重新扫描。`clear` 不表示到达机械零点，传感器触发也不会自动执行回零。
+推出端限位触发时只允许缩回，缩回端触发时只允许推出。朝已知触发端运动的请求返回 `ok:false`；若请求入队后才触发，由硬件线程丢弃整条多轴目标并更新 `state.message`，先前 ACK 不代表已执行。旧目标不会在传感器解除后自动恢复；触发后需显式提交离开该端的反向目标，并继续心跳。运行中两端同时触发时停止冲突轴运动并保持 `enabled`，两方向目标均拒绝；信号恢复后必须提交新目标，不恢复旧运动。使能前已有双端冲突仍拒绝启动；驱动报警、急停、掉线等仍进入 `fault`。`clear` 不表示到达机械零点，传感器触发也不会自动执行回零。

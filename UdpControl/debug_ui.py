@@ -76,7 +76,7 @@ class DebugWindow:
         self.adapter_box.pack(side='left', padx=8, fill='x', expand=True)
         self.adapters_button = ttk.Button(network, text='刷新控制卡', command=self.adapters)
         self.adapters_button.pack(side='left')
-        self.scan_button = ttk.Button(network, text='扫描电机', command=self.scan)
+        self.scan_button = ttk.Button(network, text='重新扫描并恢复控制', command=self.claim)
         self.scan_button.pack(side='left', padx=(8, 0))
         self.tree = ttk.Treeview(frame, columns=('checked','order','id','name','position','travel','target','state',
                                                 'limit','inputs','retraction'), show='headings', height=5)
@@ -107,15 +107,13 @@ class DebugWindow:
         self.acceleration_slider = ttk.Scale(params,from_=1,to=3000,
                                              command=lambda value:self.drag_profile('acceleration',value))
         self.acceleration_slider.grid(row=1,column=2,sticky='ew',padx=(0,12))
-        self.enable_button = ttk.Button(params,text='开启连续使能',command=self.enable)
-        self.enable_button.grid(row=0,column=3,sticky='ew')
         self.profile_button = ttk.Button(params,text='应用速度 / 加减速度',command=self.apply_profile)
-        self.profile_button.grid(row=1,column=3,sticky='ew')
+        self.profile_button.grid(row=0,column=3,rowspan=2,sticky='ew')
         for entry in (self.rpm_entry,self.acceleration_entry):
             entry.bind('<Return>',lambda _:self.apply_profile())
             entry.bind('<FocusOut>',lambda _:self.sync_profile_sliders())
         self.sync_profile_sliders()
-        ttk.Label(frame,text='获取调试控制权后自动扫描并使能全部电机，保持当前位置；关闭使能 / Esc 可取消。').pack(anchor='w')
+        ttk.Label(frame,text='获取控制权后全部电机保持连续使能；限位仅停止运动。停止后可重新获取控制，关闭使能 / Esc 可取消。').pack(anchor='w')
         target_controls = ttk.Frame(frame)
         target_controls.pack(fill='x',pady=(12,0))
         ttk.Label(target_controls,text='滑块控制').pack(side='left')
@@ -201,11 +199,12 @@ class DebugWindow:
                                                 retry_timeout=.03),'target',motion=True)
 
     def claim(self):
-        if self.client.session or self.auto_start:
+        if (self.auto_start or self.enable_pending or self.stop_pending or
+                self.client.session and self.state.get('phase') not in ('idle','fault')):
             return
         self.start_cancel = threading.Event()
         self.start_deadline = time.monotonic()+15
-        self.auto_start = 'claim'
+        self.auto_start = 'wait_idle' if self.client.session else 'claim'
 
     def advance_start(self):
         """Advance only after fresh ACK/state feedback; never retry an enable."""
@@ -496,10 +495,11 @@ class DebugWindow:
                 value=sensor.get(key) if sensor.get('valid') else None
                 return '?' if value is None else '1' if value else '0'
             inputs=f"{bit('di1')} / {bit('di2')} · {bit('positive_limit')} / {bit('negative_limit')}"
+            error=a.get('error_code',d.get('error_code',0))
             values=('☑' if order in self.selected else '☐',order,d['id'],f"{d['name']} / {d['motor_code']}",
                     a.get('position',d['position']),f"{a.get('travel_degrees') or 0:.3f}",
                     f"{self.target_values.get(order,0.):g}",
-                    f"报警 {a['error_code']}" if a.get('error_code') else '使能' if a.get('enabled') else '未使能',
+                    f"报警 0x{error:04X}" if error else '使能' if a.get('enabled') else '未使能',
                     limit_text,inputs,retraction_text)
             triggered=sensor.get('triggered') or sensor.get('retraction_triggered')
             known=sensor.get('state')=='clear' and sensor.get('retraction_state','no_sensor') in ('clear','no_sensor')
@@ -512,11 +512,11 @@ class DebugWindow:
                 self.tree.insert('','end',iid=str(order),values=values,tags=tags)
         owner=bool(self.client.session)
         idle=not self.auto_start and not self.enable_pending and state.get('phase') not in ('scanning','enabling','enabled','stopping')
-        self.claim_button.configure(state='disabled' if owner or self.auto_start else 'normal')
+        self.claim_button.configure(text='重新获取调试控制' if owner else '获取调试控制权',
+                                   state='normal' if idle and not self.stop_pending else 'disabled')
         for button in (self.release_button,self.adapters_button,self.scan_button):
             button.configure(state='normal' if owner and idle else 'disabled')
         self.adapter_box.configure(state='readonly' if owner and idle else 'disabled')
-        self.enable_button.configure(state='normal' if owner and idle and state.get('phase')=='idle' else 'disabled')
         self.stop_button.configure(state='normal' if self.auto_start or self.enable_pending or
                                    self.client.run_id and state.get('phase') in ('enabling','enabled') else 'disabled')
         controllable=owner and self.client.run_id==state.get('run_id') and state.get('phase')=='enabled'

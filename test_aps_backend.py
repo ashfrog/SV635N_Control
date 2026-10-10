@@ -69,6 +69,8 @@ class FakeAPS:
         self.servo_delay = 0
         self.disable_reads = {}
         self.digital_inputs = {n: 0 for n in self.io}
+        self.drive_errors = {n: 0 for n in self.io}
+        self.drive_statuswords = {n: 0x40 for n in self.io}
         self.fail_inputs = False
         self.input_bits = 32
         self.di_functions = {3: 14, 5: 15}
@@ -126,8 +128,9 @@ class FakeAPS:
         elif name == 'APS_get_field_bus_sdo':
             slave, index, sub = args[2:5]
             value = {(0x2000, 1): 14101, (0x2002, 3): 0 if slave == 2 else 1,
-                     (0x6091, 1): self.gear, (0x6091, 2): 1, (0x6041, 0): 0x40,
-                     (0x603f, 0): 0, (0x200e, 0x16): slave + 100,
+                     (0x6091, 1): self.gear, (0x6091, 2): 1,
+                     (0x6041, 0): self.drive_statuswords[self.module_axes[slave]],
+                     (0x603f, 0): self.drive_errors[self.module_axes[slave]], (0x200e, 0x16): slave + 100,
                      (0x2003, 3): self.di_functions[3], (0x2003, 5): self.di_functions[5]}[index, sub]
             for n, v in enumerate(value.to_bytes(4, 'little')):
                 args[5][n] = v
@@ -470,7 +473,7 @@ class ControllerTests(unittest.TestCase):
                         self.api.io[axis] &= ~native
                         self.api.calls.clear()
 
-    def test_both_endpoints_triggered_prevent_enable_and_fault_during_run(self):
+    def test_both_endpoints_prevent_initial_enable_but_hold_servo_during_run(self):
         self.c.options['extension_limits'] = {'10': 'di2'}
         self.c.options['retraction_limits'] = {'10': 'di1'}
         self.api.digital_inputs[10] = 3
@@ -481,9 +484,47 @@ class ControllerTests(unittest.TestCase):
         def action(q, stop, e):
             if e['kind'] == 'continuous_ready':
                 self.api.digital_inputs[10] = 3
+            elif e['kind'] == 'limit_blocked':
+                self.assertIn('保持使能', e['text'])
+                q.update_profile(30, 60)
+            elif e['kind'] == 'status':
+                self.assertTrue(all(a['enabled'] for a in e['axes']))
+                self.assertTrue(e['limits'][1]['conflict'])
+                stop.set()
         report = self.run_motion(action, (1, 3))
-        self.assertIn('同时触发', report['error'])
+        self.assertTrue(report['stopped'], report)
         self.assertTrue(report['all_disabled'])
+        self.assertFalse(any(n == 'APS_ptp_all' for n, _ in self.api.calls))
+
+    def test_limit_conflict_and_profile_change_never_resume_old_goal(self):
+        self.c.options['extension_limits'] = {'10': 'di2'}
+        self.c.options['retraction_limits'] = {'10': 'di1'}
+        blocked = False
+        def action(q, stop, event):
+            nonlocal blocked
+            if event['kind'] == 'continuous_ready':
+                q.submit([5])
+            elif event['kind'] == 'command':
+                self.api.digital_inputs[10] = 3
+            elif event['kind'] == 'limit_blocked':
+                blocked = True
+                q.update_profile(40, 80)
+            elif event['kind'] == 'profile_applied' and event['revision'] == 1:
+                self.api.digital_inputs[10] = 0
+            elif event['kind'] == 'status' and blocked and not event['limits'][1]['conflict']:
+                self.assertTrue(event['axes'][0]['enabled'])
+                self.assertEqual(sum(n == 'APS_ptp_all' for n, _ in self.api.calls), 1)
+                stop.set()
+        report = self.run_motion(action, (1,))
+        self.assertTrue(blocked)
+        self.assertTrue(report['stopped'], report)
+
+    def test_alarm_on_last_axis_is_checked_before_any_axis_is_enabled(self):
+        self.api.drive_errors[14] = 0x5443
+        self.api.drive_statuswords[14] = 0x48
+        report = self.run_motion(lambda *_: self.fail('must not enable'), (1, 2, 3))
+        self.assertIn('电机 3（Axis 14）驱动报警 0x5443', report['error'])
+        self.assertFalse(any(n == 'APS_set_servo_on' for n, _ in self.api.calls))
 
     def test_retraction_trigger_stops_motion_and_clearing_does_not_resume_old_target(self):
         self.c.options['extension_limits'] = {'10': 'di2'}
@@ -930,6 +971,35 @@ class ControllerTests(unittest.TestCase):
 
 
 class APSUDPTests(unittest.TestCase):
+    def test_cached_alarm_is_rechecked_on_worker_before_any_enable(self):
+        for cleared in (False, True):
+            with self.subTest(cleared=cleared):
+                api = FakeAPS()
+                api.drive_errors[14] = 0x5443
+                api.drive_statuswords[14] = 0x48
+                service = MotorService()
+                service.hardware.api_factory = lambda: api
+                server = UDPServer(service,port=0).start()
+                try:
+                    with MotorClient(port=server.port) as client:
+                        client.hello()
+                        client.request('scan')
+                        state = client.wait_for(('idle',))
+                        self.assertEqual(state['devices'][2]['error_code'],0x5443)
+                        if cleared:
+                            api.drive_errors[14] = 0
+                            api.drive_statuswords[14] = 0x40
+                        client.enable([1,2,3])
+                        state = client.wait_for(('enabled',)) if cleared else client.wait_for(('fault',))
+                        if cleared:
+                            self.assertTrue(state['enabled'])
+                        else:
+                            self.assertIn('电机 3（Axis 14）驱动报警 0x5443',state['message'])
+                            self.assertFalse(any(n=='APS_set_servo_on' for n,_ in api.calls))
+                finally:
+                    server.close()
+                    service.close()
+
     def test_backend_startup_automatically_scans_default_card_and_can_retry_failure(self):
         import backend
         for fail_scan in (False, True):
@@ -970,7 +1040,7 @@ class APSUDPTests(unittest.TestCase):
                 self.assertFalse(any(name in ('APS_set_servo_on', 'APS_ptp_all') for name, _ in api.calls))
                 self.assertEqual(len(api.threads), 1)
 
-    def test_udp_dual_limits_escape_each_end_and_latch_conflict(self):
+    def test_udp_dual_limits_escape_each_end_and_hold_enable_on_conflict(self):
         api = FakeAPS()
         api.digital_inputs[14] = 2 | (1 << 16)  # Retraction DI1 / P-OT.
         service = MotorService(aps_options=dict(extension_limits={'14': 'di2'},
@@ -1005,9 +1075,18 @@ class APSUDPTests(unittest.TestCase):
             client.target([-5])
             wait_state(lambda s: sum(n == 'APS_ptp_all' for n, _ in api.calls) == 2)
             api.digital_inputs[14] = 3
-            state = client.wait_for(('fault',))
+            state = wait_state(lambda s: s['phase'] == 'enabled' and '同时触发' in s['message'])
             self.assertIn('同时触发', state['message'])
-            self.assertTrue(state['result']['all_disabled'])
+            self.assertTrue(state['enabled'])
+            with self.assertRaisesRegex(UDPError, '同时触发'):
+                client.target([0])
+            client.set_profile(30,60)
+            wait_state(lambda s: (s['applied_profile'] or {}).get('rpm') == 30)
+            moves = sum(n == 'APS_ptp_all' for n, _ in api.calls)
+            api.digital_inputs[14] = 0
+            wait_state(lambda s: not next(l for l in s['limits'] if l['order']==3)['conflict'])
+            self.assertEqual(sum(n == 'APS_ptp_all' for n, _ in api.calls), moves)
+            self.assertEqual(state['phase'], 'enabled')
         finally:
             client.close()
             server.close()
