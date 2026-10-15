@@ -167,7 +167,9 @@ def main():
         handler=RotatingFileHandler(log_dir/'service.log',maxBytes=2_000_000,backupCount=5,encoding='utf-8')
         logging.basicConfig(level=logging.INFO,handlers=[handler],format='%(asctime)s %(levelname)s %(name)s %(message)s')
         service=MotorService(config['adapter'],log_dir,config['heartbeat_timeout_s'],
-                             aps_options=config['aps'],platform_options=config['platform'])
+                             aps_options=config['aps'],platform_options=config['platform'],
+                             reference_path=args.config.resolve().parent/'platform.reference.json',
+                             configuration_path=args.config.resolve())
         # Publish the startup scan before the first client can enable or rescan.
         # Bind first so a duplicate backend cannot start accessing the card.
         with service.lock:

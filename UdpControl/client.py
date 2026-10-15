@@ -92,7 +92,7 @@ class MotorClient:
                 packet['session'] = self.session
             if self.auth_key:
                 packet['auth_key'] = self.auth_key
-            if kind in ('scan', 'enable', 'release'):
+            if kind in ('scan', 'enable', 'release', 'save_reference', 'return_reference', 'configure_platform'):
                 self.control_sequence += 1
                 packet['control_seq'] = self.control_sequence
             event, replies = threading.Event(), []
@@ -145,6 +145,26 @@ class MotorClient:
             self.sequence += 1
             return self.run_id, self.sequence
 
+    def save_reference(self, *, physical_center_confirmed=False):
+        with self.control_lock:
+            return self.request('save_reference', physical_center_confirmed=physical_center_confirmed)
+
+    def configure_platform(self, travel_mm, reference_id, *, calibration_confirmed=False):
+        with self.control_lock:
+            return self.request('configure_platform', travel_mm=travel_mm, reference_id=reference_id,
+                                calibration_confirmed=calibration_confirmed)
+
+    def return_reference(self, reference_id, *, position_reference_confirmed=False):
+        with self.control_lock:
+            reply = self.request('return_reference', reference_id=reference_id,
+                                 position_reference_confirmed=position_reference_confirmed)
+            with self.lock:
+                if self.backend_exiting.is_set():
+                    raise UDPError('后台正在退出。')
+                self.run_id, self.sequence = reply['run_id'], -1
+                self.background_error = None
+            return reply
+
     def enable_platform(self, orders, calibration_id, *, reference_confirmed=False):
         """Arm only after the operator confirms the calibrated physical neutral."""
         with self.control_lock:
@@ -166,6 +186,15 @@ class MotorClient:
         return self.request('pose', run_id=run_id, seq=seq,
             pose=dict(heave_mm=heave_mm, pitch_deg=pitch_deg, roll_deg=roll_deg),
             retries=1, retry_timeout=.08)
+
+    def heights(self, heights_mm, *, expected_run_id=None, retry_timeout=.08):
+        """Stream three absolute millimetre offsets; zero returns to calibrated neutral."""
+        with self.lock:
+            if expected_run_id is not None and expected_run_id != self.run_id:
+                raise UDPError('Height frame belongs to an ended run')
+            run_id, seq = self._next_sequence()
+        return self.request('heights', run_id=run_id, seq=seq, heights_mm=list(heights_mm),
+                            retries=1, retry_timeout=retry_timeout)
 
     def target(self, targets_deg, *, expected_run_id=None, retry_timeout=.15):
         with self.lock:

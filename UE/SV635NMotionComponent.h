@@ -7,7 +7,7 @@ class FSocket;
 class FInternetAddr;
 class FJsonObject;
 
-// UDP v1 platform client. Faults, game pauses and stale poses require explicit rearming.
+// UDP v1 platform client. Faults, game pauses and stale height input require explicit rearming.
 UCLASS(ClassGroup=(Motion), meta=(BlueprintSpawnableComponent))
 class USV635NMotionComponent : public UActorComponent
 {
@@ -27,7 +27,7 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="SV635N|Timing", meta=(ClampMin="10", ClampMax="60"))
     float SendRateHz = 30.f;
     UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="SV635N|Timing", meta=(ClampMin="0.1", ClampMax="0.5"))
-    float PoseInputTimeout = .2f;
+    float HeightInputTimeout = .2f;
     // Last observed hardware value. FeedbackValid must also be checked.
     UPROPERTY(BlueprintReadOnly, Category="SV635N|Feedback")
     bool HardwareEnabled = false;
@@ -44,10 +44,11 @@ public:
     UPROPERTY(BlueprintReadOnly, Category="SV635N|Feedback")
     TArray<int32> MappedOrders;
 
-    // Millimetres, not Unreal centimetres. Pitch front-up, roll right-up.
-    // Call every game update, including a stationary pose.
+    // Absolute millimetre offsets: motor 1 front-left, 2 front-right, 3 rear.
+    // Zero = calibrated neutral, positive = extend up, negative = retract down.
+    // Call every game update, including stationary heights.
     UFUNCTION(BlueprintCallable, Category="SV635N|Control")
-    void SetPlatformPose(float HeaveMillimetres, float PitchDegrees, float RollDegrees);
+    void SetPlatformHeights(float FrontLeftMillimetres, float FrontRightMillimetres, float RearMillimetres);
     UFUNCTION(BlueprintCallable, Category="SV635N|Control")
     bool ArmPlatform(bool PhysicalNeutralConfirmed);
     UFUNCTION(BlueprintCallable, Category="SV635N|Control")
@@ -64,10 +65,10 @@ private:
     FString ObserveId, PendingId, PendingKind;
     TSharedPtr<FJsonObject> Pending;
     TMap<FString, double> StreamRequests;
-    FVector Pose = FVector::ZeroVector;
+    FVector Heights = FVector::ZeroVector;
     int64 Sequence = 0, ControlSequence = -1, StateSerial = -1;
     bool WantEnable = false, Ending = false;
-    double LastPoseTime = -1, LastFeedbackTime = -1;
+    double LastHeightTime = -1, LastFeedbackTime = -1;
     double LastSendTime = 0, LastObserveTime = 0, NextRetry = 0;
     int32 Attempts = 0;
     double FeedbackTimeout = .35;

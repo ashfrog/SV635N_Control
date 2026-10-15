@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 import logging
 import math
+from pathlib import Path
 import threading
 import time
 import uuid
@@ -10,6 +11,7 @@ import uuid
 from control_common import ControlError, MotionQueue
 from aps_backend import PCIe8332Controller
 from platform_motion import PlatformGeometry, PlatformMotionQueue
+from fixed_reference import FixedReference
 
 LOG = logging.getLogger(__name__)
 BUSY = ('scanning', 'enabling', 'enabled', 'stopping')
@@ -17,7 +19,8 @@ BUSY = ('scanning', 'enabling', 'enabled', 'stopping')
 
 class MotorService:
     def __init__(self, adapter='PCIe-8332:0', log_dir=None, heartbeat_timeout=.5, controller_factory=None,
-                 aps_options=None, platform_options=None, hardware_controller=None):
+                 aps_options=None, platform_options=None, hardware_controller=None, reference_path=None,
+                 configuration_path=None):
         if type(heartbeat_timeout) not in (float, int) or not math.isfinite(heartbeat_timeout) or not .1 <= heartbeat_timeout <= 5:
             raise ValueError('heartbeat_timeout 必须为 0.1～5 秒。')
         self.adapter, self.log_dir, self.timeout = adapter, log_dir, heartbeat_timeout
@@ -32,6 +35,8 @@ class MotorService:
             raise ValueError('Specify hardware_controller or controller_factory, not both')
         self.hardware = (hardware_controller if hardware_controller is not None else
                          None if controller_factory else PCIe8332Controller(adapter, log_dir, aps_options))
+        self.reference = FixedReference(reference_path, adapter, getattr(self.hardware, 'backend_name', 'aps'))
+        self.configuration_path = Path(configuration_path) if configuration_path else None
         self.lock = threading.RLock()
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='Motor-Hardware')
         self.devices = []
@@ -57,11 +62,15 @@ class MotorService:
             feedback = {a['order']: a for a in self.axes}
             profile = self.commands.profile() if self.commands else None
             return deepcopy(dict(phase=self.phase, message=self.message, adapter=self.adapter,
+                fixed_reference=self.reference.status(self.devices, feedback),
                 control_mode=self.control_mode,
                 platform=dict(configured=self.platform.config['enabled'],
+                    setup_available=self.configuration_path is not None,
                     calibration_id=self.platform.config['calibration_id'],
                     orders=self.platform.orders, pose=self.platform_pose,
                     lengths_mm=self.platform_lengths,
+                    travel_bounds_mm=[[leg['min_mm'], leg['max_mm']] for leg in self.platform.legs],
+                    max_heave_mm=self.platform.config['max_heave_mm'],
                     commanded_deg=list(self.commands.output) if isinstance(self.commands, PlatformMotionQueue) else [],
                     actual_lengths_mm=[(feedback[leg['order']]['travel_degrees'] * leg['mm_per_rev']
                         / 360 * leg['extension_sign'] if leg['order'] in feedback else None)
@@ -113,14 +122,35 @@ class MotorService:
             self.limits = {}
             self.executor.submit(self._scan)
 
-    def _scan(self):
+    def _scan(self, save_reference=False):
         try:
             devices = self._controller().scan()
             limits = self.hardware.read_inputs(devices) if self.hardware else {}
+            if save_reference:
+                # Scan reads disabled axes. A second sample rejects drift after stop.
+                time.sleep(.1)
+                current = self.hardware.scan()
+                if ([d.identity for d in devices] != [d.identity for d in current]
+                        or any(abs(a.position-b.position) > max(2., a.units_per_rev*.2/360)
+                               for a,b in zip(devices,current))):
+                    raise ControlError('保存期间位置发生变化，请确认撑杆已停稳。')
+                devices = current
+                limits = self.hardware.read_inputs(devices)
+                if any(d.error_code or d.statusword & 8 for d in devices if d.order in (1,2,3)):
+                    raise ControlError('驱动器报警，不能保存固定初始位。')
+                if any(sensor.get('triggered') or sensor.get('retraction_triggered') or sensor.get('conflict')
+                       or (sensor.get('input') or sensor.get('retraction_input')) and not sensor.get('valid')
+                       for order,sensor in limits.items() if order in (1,2,3)):
+                    raise ControlError('端点限位触发或反馈无效，不能将当前位置保存为中位。')
+                self.reference.save(devices)
             with self.lock:
                 self.devices = devices
                 self.limits = limits
-                self.phase, self.message = 'idle', f'扫描到 {len(devices)} 台电机'
+                if save_reference:
+                    # Previous run feedback must not override the freshly saved positions.
+                    self.axes = []
+                self.phase, self.message = 'idle', ('已保存三轴固定初始位；使能不会自动返回。' if save_reference
+                                                    else f'扫描到 {len(devices)} 台电机')
             LOG.info('Scan completed: %s devices', len(devices))
         except Exception as exc:
             if self.hardware:
@@ -131,6 +161,48 @@ class MotorService:
                 self.phase, self.message = 'fault', str(exc)
             LOG.exception('Scan failed')
 
+    def save_reference(self, confirmed=False):
+        with self.lock:
+            if self.phase != 'idle' or self.shutdown.is_set() or confirmed is not True:
+                raise ControlError('请先停止全部电机，确认三根撑杆处于实际中位后再保存。')
+            if not self.hardware or not self.reference.path:
+                raise ControlError('后台未启用固定初始位存储。')
+            self.phase, self.message = 'scanning', '正在核对停稳位置并保存固定初始位，不使能、不移动'
+            self.executor.submit(self._scan, True)
+
+    def return_reference(self, reference_id, position_reference_confirmed=False):
+        with self.lock:
+            if position_reference_confirmed is not True:
+                raise ControlError('请确认位置计数未重置且返回路径可通行。')
+            data = self.reference.validate(self.devices)
+            if reference_id != data['id']:
+                raise ControlError('固定初始位版本已变化，请刷新状态后重试。')
+            return self.enable([1, 2, 3], 5, 10, mode='reference')
+
+    def configure_platform(self, travel_mm, reference_id, calibration_confirmed=False):
+        with self.lock:
+            if self.phase != 'idle' or self.shutdown.is_set():
+                raise ControlError('先关闭使能并等待停稳，再配置高度控制。')
+            if not self.configuration_path or not self.hardware:
+                raise ControlError('当前后台不支持在线保存平台配置。')
+            if calibration_confirmed is not True:
+                raise ControlError('请确认实测行程、三轴安装编号和两端传感器对应方向。')
+            reference = self.reference.validate(self.devices)
+            if reference_id != reference['id']:
+                raise ControlError('固定中位版本已变化，请刷新后重新配置。')
+            if not self.hardware.options['limit_inputs_connected']:
+                raise ControlError('高度控制要求接入并配置两端限位传感器。')
+            from platform_setup import calibrated_geometry, save_platform_configuration
+            platform = calibrated_geometry(self.devices, travel_mm)
+            try:
+                save_platform_configuration(self.configuration_path, platform)
+            except (OSError, ValueError, TypeError) as exc:
+                raise ControlError(f'保存平台配置失败，原运行配置未改变：{exc}') from exc
+            self.platform = platform
+            self.platform_pose, self.platform_lengths = None, []
+            self.commands = None
+            self.message = '平台高度控制已配置并保存；请确认固定中位，再获取控制。'
+
     def enable(self, orders, rpm=60, acceleration=120, *, mode='motor', reference_confirmed=False,
                calibration_id=None):
         with self.lock:
@@ -140,7 +212,7 @@ class MotorService:
                 raise ControlError('故障已锁定，请核对设备并重新扫描后再开启。')
             if not isinstance(orders, list) or not orders or any(type(n) is not int for n in orders):
                 raise ControlError('orders 必须为非空链路位置整数数组。')
-            if mode not in ('motor', 'platform'):
+            if mode not in ('motor', 'platform', 'reference'):
                 raise ControlError('Unknown control mode')
             if mode == 'platform':
                 if not self.platform.config['enabled']:
@@ -163,6 +235,14 @@ class MotorService:
                         for key in ('extension_limits', 'retraction_limits'))):
                         raise ControlError('Platform requires configured dual endpoint sensors on all supports')
                 commands = PlatformMotionQueue(self.platform)
+                if self.reference.path:
+                    commands.neutral_reference = deepcopy(self.reference.validate(self.devices))
+            elif mode == 'reference':
+                if orders != [1, 2, 3]:
+                    raise ControlError('固定初始位返回必须控制全部三轴。')
+                commands = MotionQueue(orders, 5, 10)
+                commands.fixed_reference = deepcopy(self.reference.validate(self.devices))
+                commands.stop_at_any_limit = True
             else:
                 if self.platform.config['enabled'] and not self.platform.config['allow_motor_debug']:
                     raise ControlError('Direct motor debug is disabled for this configured platform')
@@ -264,7 +344,7 @@ class MotorService:
             commands.close()
         LOG.info('Run finished phase=%s result=%s', self.phase, self.result)
 
-    def command(self, run_id, sequence, targets=None, profile=None, pose=None):
+    def command(self, run_id, sequence, targets=None, profile=None, pose=None, heights=None):
         with self.lock:
             if not isinstance(run_id, str) or run_id != self.run_id:
                 raise ControlError('run_id 已失效，请显式开启新运行。')
@@ -280,22 +360,26 @@ class MotorService:
                 self.stop('平台姿态流超时')
                 raise ControlError('Platform pose stream expired; explicitly arm a new run')
             previous = (self.profile_sequence if profile is not None else
-                        self.heartbeat_sequence if targets is None and pose is None else self.target_sequence)
+                        self.heartbeat_sequence if targets is None and pose is None and heights is None else self.target_sequence)
             if sequence <= previous:
                 return False
             platform_values = None
-            if pose is not None:
-                if self.control_mode != 'platform' or targets is not None or profile is not None:
-                    raise ControlError('Platform pose requires a platform run')
+            if self.control_mode == 'reference' and any(value is not None for value in (targets, profile, pose, heights)):
+                raise ControlError('固定初始位返回只接受停止或心跳，不能覆盖返回目标。')
+            if pose is not None or heights is not None:
+                if (self.control_mode != 'platform' or targets is not None or profile is not None
+                        or pose is not None and heights is not None):
+                    raise ControlError('Platform input requires one pose or height frame in a platform run')
                 if self.phase != 'enabled':
                     raise ControlError('Wait for platform enable before sending poses')
                 try:
-                    platform_values, lengths, targets = self.platform.pose_to_targets(pose)
+                    platform_values, lengths, targets = (self.platform.heights_to_targets(heights)
+                        if heights is not None else self.platform.pose_to_targets(pose))
                 except ControlError:
                     self.stop('平台目标无效或超出标定范围')
                     raise
             elif self.control_mode == 'platform' and (targets is not None or profile is not None):
-                raise ControlError('Platform run accepts poses only; raw targets/profiles cannot bypass limits')
+                raise ControlError('Platform run accepts heights/poses only; raw targets/profiles cannot bypass limits')
             if profile is not None:
                 if self.phase != 'enabled':
                     raise ControlError('使能尚未就绪，不能更新速度和加速度。')

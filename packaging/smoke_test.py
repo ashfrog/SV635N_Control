@@ -54,7 +54,8 @@ def main():
         workspace=Path(directory).resolve()
         assert workspace.is_relative_to(parent.resolve())
         deployed=workspace/'移动后的服务'
-        shutil.copytree(ROOT/'SVServer',deployed,ignore=shutil.ignore_patterns('logs','backend.config.json'))
+        shutil.copytree(ROOT/'SVServer',deployed,ignore=shutil.ignore_patterns(
+            'logs','backend.config.json','*.before-platform.bak','platform.reference.json','platform.simulated.reference.json'))
         executable=deployed/'SVServer.exe'
         def start(arguments):
             return subprocess.Popen([str(executable),*arguments],cwd=workspace,env=env,
@@ -74,14 +75,58 @@ def main():
                         return False
                 wait_for(ready,process)
                 client.hello()
+                client.save_reference(physical_center_confirmed=True)
+                client.wait_for(('idle',))
                 client.enable_platform([1,2,3],'simulation-only-v1',reference_confirmed=True)
                 client.wait_for(('enabled',))
-                client.pose(0,0,0)
+                reference_id = client.state['fixed_reference']['id']
+                for heights in ([.2, -.2, .1], [0, 0, 0], [.2, .2, .2]):
+                    deadline=time.monotonic()+3
+                    while time.monotonic()<deadline:
+                        client.heights(heights)
+                        state=client.status()
+                        actual=state['platform']['actual_lengths_mm']
+                        if all(value is not None and abs(value-target)<.02
+                               for value,target in zip(actual,heights)):
+                            break
+                        time.sleep(.025)
+                    else:
+                        raise AssertionError('Packaged support heights did not reach target')
+                    assert state['platform']['lengths_mm']==heights and state['enabled']
+                    assert len(state['platform']['travel_bounds_mm'])==3
                 client.disable()
                 state=client.wait_for(('idle','fault'))
                 assert state['hardware_backend']=='simulated' and state['result']['all_disabled']
+                client.return_reference(reference_id, position_reference_confirmed=True)
+                client.wait_for(('enabled',))
+                wait_for(lambda:all(abs(value)<.02 for value in
+                    client.status()['fixed_reference']['heights_mm']),process)
+                assert client.state['control_mode']=='reference'
+                assert client.state['profile']['rpm']==5
+                client.disable()
+                client.wait_for(('idle',))
                 client.release()
                 results['relocated_simulation_and_platform_udp']='passed'
+                results['relocated_signed_heights_and_return_to_neutral']='passed'
+                results['relocated_fixed_reference_low_speed_return']='passed'
+        finally:
+            stop_process(process)
+
+        saved = deployed/'platform.simulated.reference.json'
+        assert saved.exists() and json.loads(saved.read_text(encoding='utf-8'))['id']==reference_id
+        process=start(['--simulate','--port',str(port)])
+        try:
+            with MotorClient(port=port) as client:
+                def restored():
+                    try:
+                        client.hello(claim=False)
+                        reference=client.state.get('fixed_reference',{})
+                        return reference.get('valid') and reference.get('id')==reference_id
+                    except UDPError:
+                        return False
+                wait_for(restored,process)
+                assert client.state['phase']=='idle' and not client.state['enabled']
+                results['relocated_fixed_reference_survives_process_restart']='passed'
         finally:
             stop_process(process)
 

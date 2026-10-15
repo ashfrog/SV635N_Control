@@ -98,6 +98,42 @@ class PlatformGeometry:
         # Plane normal from Ry(-pitch) Rx(-roll). Intersect vertical support lines.
         lengths = [values['heave_mm'] + leg['x_mm'] * math.tan(pitch)
                    + leg['y_mm'] * math.tan(roll) / math.cos(pitch) for leg in self.legs]
+        return values, lengths, self.lengths_to_targets(lengths)
+
+    def heights_to_targets(self, heights):
+        """Absolute support offsets from the calibrated neutral, in leg order.
+
+        Derive the platform plane so height input obeys the same pose envelope.
+        Zero is a position target, never a disable or a new reference capture.
+        """
+        if not self.config['enabled']:
+            raise ControlError('Platform mode is not configured')
+        if not isinstance(heights, list) or len(heights) != 3:
+            raise ControlError('heights_mm requires exactly three support heights')
+        try:
+            lengths = [finite(value, 'heights_mm') for value in heights]
+        except ValueError as exc:
+            raise ControlError(str(exc)) from exc
+        targets = self.lengths_to_targets(lengths)
+        a, b, c = self.legs
+        dx1, dy1 = b['x_mm'] - a['x_mm'], b['y_mm'] - a['y_mm']
+        dx2, dy2 = c['x_mm'] - a['x_mm'], c['y_mm'] - a['y_mm']
+        dz1, dz2 = lengths[1] - lengths[0], lengths[2] - lengths[0]
+        determinant = dx1 * dy2 - dx2 * dy1
+        slope_x = (dz1 * dy2 - dz2 * dy1) / determinant
+        slope_y = (dx1 * dz2 - dx2 * dz1) / determinant
+        pitch = math.atan(slope_x)
+        values = dict(heave_mm=lengths[0] - a['x_mm'] * slope_x - a['y_mm'] * slope_y,
+                      pitch_deg=math.degrees(pitch),
+                      roll_deg=math.degrees(math.atan(slope_y * math.cos(pitch))))
+        for name, value in values.items():
+            limit = self.config['max_' + name]
+            if not math.isfinite(value) or (abs(value) > limit
+                    and not math.isclose(abs(value), limit, rel_tol=1e-12, abs_tol=1e-12)):
+                raise ControlError(f'{name} exceeds calibrated platform envelope')
+        return values, lengths, targets
+
+    def lengths_to_targets(self, lengths):
         targets = []
         for leg, length in zip(self.legs, lengths):
             if not math.isfinite(length) or not leg['min_mm'] <= length <= leg['max_mm']:
@@ -106,7 +142,7 @@ class PlatformGeometry:
             if not math.isfinite(degrees):
                 raise ControlError('Motor target cannot be represented')
             targets.append(degrees)
-        return values, lengths, targets
+        return targets
 
     def profile(self):
         # A common RPM/acceleration must respect the most restrictive support.

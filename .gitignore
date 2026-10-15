@@ -5,8 +5,14 @@ logs/
 settings.json
 UdpControl/config.json
 backend.config.json
+backend.config.json.before-platform.bak
+platform.reference.json
+platform.simulated.reference.json
 *.7z
 .build/
 SVServer/_internal/
 SVServer/*.exe
 SVServer/backend.config.json
+SVServer/backend.config.json.before-platform.bak
+SVServer/platform.reference.json
+SVServer/platform.simulated.reference.json

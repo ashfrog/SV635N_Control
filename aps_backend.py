@@ -110,6 +110,9 @@ class APSLibrary:
         if result < 0:
             hint = ('；EtherCAT 主站配置错误，请在 MotionCreatorPro2 核对 ESI、重新扫描生成 ENI，'
                     '关闭 MCPro2 后重试（ESI 不是 APS 参数文件）' if result == -4012 else '')
+            if name == 'APS_initial' and result == -5:
+                hint = ('（ERR_NoDeviceFound）：未检测到 ADLINK 控制卡，与急停接线无关；'
+                        '请在设备管理器确认 PCIe-8332 在线，并检查板卡连接、供电和驱动。')
             raise APSError(name, args, result, hint)
         return result
 
@@ -609,6 +612,12 @@ class PCIe8332Controller:
             if [d.identity for d in devices] != [d.identity for d in current]:
                 raise ControlError('扫描后设备/轴映射/电子齿轮发生变化，请重新扫描。')
             selected = [refreshed[n] for n in commands.orders]
+            from fixed_reference import check_neutral, reference_targets
+            if hasattr(commands, 'neutral_reference'):
+                check_neutral(commands.neutral_reference, selected)
+            return_targets = (reference_targets(commands.fixed_reference, selected,
+                {d.order: d.position for d in selected}, commands.rpm, commands.acceleration)
+                if hasattr(commands, 'fixed_reference') else None)
             preflight = self.read_inputs(selected)
             for d in selected:
                 if d.error_code or d.statusword & 8:
@@ -668,6 +677,10 @@ class PCIe8332Controller:
             callback(dict(kind='profile_applied', revision=profile_revision, rpm=rpm,
                           acceleration_rpm_s=acceleration_rpm_s))
             commands.mark_ready()
+            if return_targets is not None:
+                return_targets = reference_targets(commands.fixed_reference, selected,
+                    {d.order: origins[d.axis_id] for d in selected}, commands.rpm, commands.acceleration)
+                commands.submit(return_targets)
             callback(dict(kind='continuous_ready', orders=list(commands.orders)))
             began = time.monotonic()
             last_status = 0

@@ -145,7 +145,7 @@ class UDPServer:
                         if old_fingerprint != fingerprint:
                             raise ControlError('重复 id 的请求内容不同。')
                         return old_response
-                    if kind in ('scan', 'enable', 'release'):
+                    if kind in ('scan', 'enable', 'release', 'save_reference', 'return_reference', 'configure_platform'):
                         seq = packet.get('control_seq')
                         if type(seq) is not int or not 0 <= seq <= 2**53 - 1 or seq <= self.control_sequence:
                             raise ControlError('control_seq 必须严格递增；过期控制请求不能再次执行。')
@@ -154,9 +154,19 @@ class UDPServer:
                     self._remember_client(peer)
                     if kind == 'scan':
                         self.service.scan(packet.get('adapter'))
+                    elif kind == 'save_reference':
+                        self.service.save_reference(packet.get('physical_center_confirmed', False))
+                    elif kind == 'return_reference':
+                        response['run_id'] = self.service.return_reference(packet.get('reference_id'),
+                            packet.get('position_reference_confirmed', False))
+                    elif kind == 'configure_platform':
+                        self.service.configure_platform(packet.get('travel_mm'), packet.get('reference_id'),
+                            packet.get('calibration_confirmed', False))
                     elif kind == 'enable':
                         options = {}
                         if 'mode' in packet:
+                            if packet['mode'] == 'reference':
+                                raise ControlError('请使用带固定初始位版本和坐标确认的 return_reference 请求。')
                             options = dict(mode=packet['mode'],
                                 reference_confirmed=packet.get('reference_confirmed', False),
                                 calibration_id=packet.get('calibration_id'))
@@ -167,6 +177,11 @@ class UDPServer:
                             raise ControlError('pose must be an object')
                         response['accepted'] = self.service.command(packet.get('run_id'), packet.get('seq'),
                             pose=packet['pose'])
+                    elif kind == 'heights':
+                        # Validate in the service after ownership/run/sequence checks.
+                        # Even a missing payload must not be mistaken for a heartbeat.
+                        response['accepted'] = self.service.command(packet.get('run_id'), packet.get('seq'),
+                            heights=packet['heights_mm'] if packet.get('heights_mm') is not None else [])
                     elif kind in ('target', 'heartbeat'):
                         if kind == 'target' and not isinstance(packet.get('targets_deg'), list):
                             raise ControlError('targets_deg 必须是数组。')

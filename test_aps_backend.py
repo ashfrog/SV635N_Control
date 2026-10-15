@@ -200,8 +200,9 @@ class FakeAPS:
 class BindingTests(unittest.TestCase):
     def test_abi_and_negative_error_diagnostic(self):
         class Function:
+            result = -4012
             def __call__(self, *args):
-                return -4012
+                return self.result
         class DLL:
             def __init__(self):
                 for name in SIGNATURES:
@@ -215,6 +216,10 @@ class BindingTests(unittest.TestCase):
         self.assertIs(dll.APS_ptp_all.restype, I32)
         with self.assertRaisesRegex(ControlError, '-4012.*ESI'):
             api.call('APS_start_field_bus', 0, 0, 0)
+        dll.APS_initial.result = -5
+        with self.assertRaisesRegex(APSError, 'ERR_NoDeviceFound.*未检测到.*控制卡.*与急停接线无关') as error:
+            api.call('APS_initial', C.byref(I32()), 0)
+        self.assertEqual(error.exception.code, -5)
 
     def test_missing_dll_and_export(self):
         with patch('aps_backend.C.WinDLL', side_effect=OSError('missing')):
@@ -692,13 +697,33 @@ class ControllerTests(unittest.TestCase):
         self.c.options['emg_input_connected'] = False
         for axis in self.api.io:
             self.api.io[axis] = 0x1000050
-        report = self.run_motion(lambda q, stop, e: stop.set())
+        report = self.run_motion(lambda q, stop, e: stop.set(), orders=(1,2,3))
         self.assertTrue(report['stopped'])
         self.assertTrue(report['all_disabled'])
         self.assertEqual(self.api.board_params[0], 1)
         self.assertFalse(any(io & EMG for io in self.api.io.values()))
+        self.assertEqual([a[0] for n,a in self.api.calls if n=='APS_set_servo_on' and a[1]==1], [10,12,14])
         self.c.close()
         self.assertEqual(self.api.board_params[0], 0)
+
+    def test_missing_card_does_not_change_emg_or_enable_with_unwired_emg_setting(self):
+        self.c.options['emg_input_connected'] = False
+        call = self.api.call
+        def missing_card(name, *args):
+            result = call(name, *args)
+            if name == 'APS_initial':
+                raise APSError(name,args,-5)
+            return result
+        self.api.call = missing_card
+        with patch('aps_backend.time.sleep'):
+            with self.assertRaises(APSError) as error:
+                self.c.scan()
+        self.assertEqual(error.exception.code,-5)
+        self.assertEqual(sum(n=='APS_initial' for n,_ in self.api.calls),3)
+        self.assertEqual(sum(n=='APS_close' for n,_ in self.api.calls),3)
+        self.assertTrue(all(n in ('APS_initial','APS_close') for n,_ in self.api.calls))
+        self.assertEqual(self.api.board_params,self.api.initial_board_params)
+        self.assertFalse(self.c.initialized)
 
     def test_unwired_emg_still_active_does_not_enable(self):
         self.c.options['emg_input_connected'] = False

@@ -41,6 +41,14 @@ class DebugWindow:
         self.target_editor = None
         self.target_editor_order = None
         self.slider_orders = [None]
+        self.height_values = [0., 0., 0.]
+        self.height_run = None
+        self.height_bounds = None
+        self.height_configured = None
+        self.height_active = False
+        self.last_height_send = 0
+        self.syncing_heights = False
+        self.height_edit_handles = [None] * 4
         self.syncing = False
         self.state, self.selected = {}, set()
         self.last_query = 0
@@ -67,7 +75,7 @@ class DebugWindow:
         frame = ttk.Frame(root, padding=18)
         frame.pack(fill='both', expand=True)
         ttk.Label(frame, text='UDP 电机控制', font=('Microsoft YaHei UI', 20, 'bold')).pack(anchor='w')
-        ttk.Label(frame, text=f'后台地址 {host}:{port} · 所有操作通过 UDP。关闭界面停止本界面开启的运行，后台继续运行。').pack(anchor='w', pady=(5, 14))
+        ttk.Label(frame, text=f'后台地址 {host}:{port} · 所有操作通过 UDP。关闭界面停止本界面开启的运行，后台继续运行。').pack(anchor='w', pady=(4, 8))
         actions = ttk.Frame(frame)
         actions.pack(fill='x')
         self.claim_button = ttk.Button(actions, text='获取调试控制权', command=self.claim)
@@ -77,7 +85,7 @@ class DebugWindow:
         self.stop_button = ttk.Button(actions, text='关闭使能 / Esc', command=self.stop)
         self.stop_button.pack(side='right')
         network = ttk.Frame(frame)
-        network.pack(fill='x', pady=12)
+        network.pack(fill='x', pady=8)
         ttk.Label(network, text='PCIe 控制卡').pack(side='left')
         self.adapter_box = ttk.Combobox(network, textvariable=self.adapter, state='readonly', width=65)
         self.adapter_box.pack(side='left', padx=8, fill='x', expand=True)
@@ -86,7 +94,7 @@ class DebugWindow:
         self.scan_button = ttk.Button(network, text='重新扫描并恢复控制', command=self.claim)
         self.scan_button.pack(side='left', padx=(8, 0))
         self.tree = ttk.Treeview(frame, columns=('checked','order','id','name','position','travel','target','state',
-                                                'limit','inputs','retraction'), show='headings', height=5)
+                                                'limit','inputs','retraction'), show='headings', height=4)
         for key, label, width in (('checked','选择',50),('order','链路位置',70),('id','ID',50),('name','电机 / 编号',190),
                                   ('position','位置计数',95),('travel','偏移 °',80),('target','目标偏移 °',100),('state','反馈状态',80),
                                   ('limit','推出端限位',145),('inputs','DI1 / DI2 · 正/负限位',170),
@@ -98,8 +106,15 @@ class DebugWindow:
         self.tree.tag_configure('limit_unknown', background='#fff1cc', foreground='#634600')
         self.tree.bind('<Button-1>', self.toggle_motor)
         self.tree.bind('<Double-1>', self.edit_target)
-        ttk.Label(frame, text='两端限位分别监视；触发后仅允许反向离开，两端同时触发时禁止运动。').pack(anchor='w', pady=(5,0))
-        params = ttk.Frame(frame)
+        self.limit_hint = ttk.Label(frame, text='两端限位分别监视；触发后仅允许反向离开，两端同时触发时禁止运动。')
+        self.limit_hint.pack(anchor='w', pady=(5,0))
+        self.controls = ttk.Notebook(frame)
+        self.controls.pack(fill='x', pady=6)
+        self.motor_controls = ttk.Frame(self.controls, padding=10)
+        self.height_controls = ttk.Frame(self.controls, padding=10)
+        self.controls.add(self.motor_controls, text='电机角度调试')
+        self.controls.add(self.height_controls, text='三点高度 · UE 模拟')
+        params = ttk.Frame(self.motor_controls)
         params.pack(fill='x', pady=8)
         params.columnconfigure(2, weight=1)
         ttk.Label(params,text='最高速度 rpm').grid(row=0,column=0,sticky='w')
@@ -120,8 +135,8 @@ class DebugWindow:
         self.sync_profile_sliders()
         self.profile_edit_traces = [(variable, variable.trace_add('write', self.schedule_profile_edit))
                                     for variable in (self.rpm, self.acceleration)]
-        ttk.Label(frame,text='获取控制权后全部电机保持连续使能；限位仅停止运动。停止后可重新获取控制，关闭使能 / Esc 可取消。').pack(anchor='w')
-        target_controls = ttk.Frame(frame)
+        ttk.Label(self.motor_controls,text='获取控制权后全部电机保持连续使能；限位仅停止运动。停止后可重新获取控制，关闭使能 / Esc 可取消。').pack(anchor='w')
+        target_controls = ttk.Frame(self.motor_controls)
         target_controls.pack(fill='x',pady=(12,0))
         ttk.Label(target_controls,text='滑块控制').pack(side='left')
         self.axis_box = ttk.Combobox(target_controls,textvariable=self.slider_axis,state='disabled',
@@ -129,10 +144,10 @@ class DebugWindow:
         self.axis_box.current(0)
         self.axis_box.pack(side='left',padx=8)
         self.axis_box.bind('<<ComboboxSelected>>',lambda _:self.sync_slider())
-        ttk.Label(frame,textvariable=self.position,font=('Microsoft YaHei UI',13,'bold')).pack(anchor='w',pady=(16,4))
-        self.slider = ttk.Scale(frame,from_=-360,to=360,command=self.drag)
+        ttk.Label(self.motor_controls,textvariable=self.position,font=('Microsoft YaHei UI',13,'bold')).pack(anchor='w',pady=(16,4))
+        self.slider = ttk.Scale(self.motor_controls,from_=-360,to=360,command=self.drag)
         self.slider.pack(fill='x',pady=8)
-        ranges = ttk.Frame(frame)
+        ranges = ttk.Frame(self.motor_controls)
         ranges.pack(fill='x')
         ttk.Label(ranges,text='显示中心 °').pack(side='left')
         ttk.Entry(ranges,textvariable=self.center,width=10).pack(side='left',padx=8)
@@ -141,11 +156,229 @@ class DebugWindow:
         ttk.Button(ranges,text='设置显示范围',command=self.set_range).pack(side='left')
         self.zero_button=ttk.Button(ranges,text='所选轴回到使能起点',command=lambda:self.queue_target(0))
         self.zero_button.pack(side='right')
-        ttk.Label(frame,text='滑块拖动即更新；数字停输 0.35 秒、按 Enter 或离开输入框自动设定。各轴目标分别生效，保持其它轴目标。').pack(anchor='w',pady=10)
+        ttk.Label(self.motor_controls,text='滑块拖动即更新；数字停输 0.35 秒、按 Enter 或离开输入框自动设定。各轴目标分别生效，保持其它轴目标。').pack(anchor='w',pady=10)
+        self.build_height_controls()
         ttk.Label(frame,textvariable=self.status,wraplength=980).pack(anchor='w',pady=8)
         self.log = tk.Text(frame,height=4,state='disabled',wrap='word')
         self.log.pack(fill='both',expand=True)
         self.poll_handle = root.after(5,self.poll)
+
+    def build_height_controls(self):
+        frame = self.height_controls
+        frame.columnconfigure(2, weight=1)
+        ttk.Label(frame, text='高度单位 mm：0 回到标定初始位，正数向上推，负数向下拉。',
+                  font=('Microsoft YaHei UI', 11, 'bold')).grid(row=0, column=0, columnspan=3, sticky='w', pady=(0,8))
+        self.platform_setup_button = ttk.Button(frame, text='配置 / 启用高度控制', command=self.open_platform_setup)
+        self.platform_setup_button.grid(row=0, column=3, sticky='e', pady=(0,8))
+        self.neutral_confirmed = tk.BooleanVar(value=False)
+        self.neutral_box = ttk.Checkbutton(frame, text='已确认三根撑杆处于标定初始位（每次获取控制前确认）',
+                                          variable=self.neutral_confirmed)
+        self.neutral_box.grid(row=1, column=0, columnspan=4, sticky='w', pady=(0,10))
+        self.height_vars = [tk.StringVar(value='0') for _ in range(4)]
+        self.height_entries, self.height_sliders, self.height_actual = [], [], []
+        for index, label in enumerate(('1 号 · 前左', '2 号 · 前右', '3 号 · 后中', '三轴共同高度')):
+            ttk.Label(frame, text=label).grid(row=index+2, column=0, sticky='w', padx=(0,12), pady=5)
+            entry = ttk.Entry(frame, textvariable=self.height_vars[index], width=12, justify='right')
+            entry.grid(row=index+2, column=1, padx=(0,12), pady=5)
+            slider = ttk.Scale(frame, from_=-20, to=20,
+                               command=lambda value, i=index:self.drag_height(i, value))
+            slider.grid(row=index+2, column=2, sticky='ew', pady=5)
+            actual = ttk.Label(frame, text='实际高度 —' if index < 3 else '同时设定三轴', width=25)
+            actual.grid(row=index+2, column=3, padx=(12,0), sticky='w')
+            entry.bind('<Return>', lambda _, i=index:self.commit_height_edit(i))
+            entry.bind('<FocusOut>', lambda _, i=index:self.commit_height_edit(i))
+            self.height_entries.append(entry)
+            self.height_sliders.append(slider)
+            self.height_actual.append(actual)
+        self.height_zero_button = ttk.Button(frame, text='三轴回到初始位（0 mm）',
+                                              command=lambda:self.queue_axis_height(None, 0.))
+        self.height_zero_button.grid(row=6, column=0, columnspan=2, sticky='w', pady=(10,4))
+        reference_actions = ttk.Frame(frame)
+        reference_actions.grid(row=6, column=2, columnspan=2, sticky='w', padx=12)
+        self.save_reference_button = ttk.Button(reference_actions, text='保存当前位置为固定初始位', command=self.save_fixed_reference)
+        self.save_reference_button.pack(side='left')
+        self.return_reference_button = ttk.Button(reference_actions, text='低速返回固定初始位', command=self.return_fixed_reference)
+        self.return_reference_button.pack(side='left', padx=8)
+        self.height_stream_label = ttk.Label(frame, text='等待后台平台配置。', wraplength=1120)
+        self.height_stream_label.grid(row=8, column=0, columnspan=4, sticky='w', pady=(6,0))
+        ttk.Label(frame, text='拖动立即设定；数字停输 0.35 秒、Enter 或失焦设定。约 30 Hz 持续发送；完整目标需满足行程及姿态限制。').grid(
+            row=7, column=0, columnspan=4, sticky='w', pady=(8,0))
+        self.height_edit_traces = [(variable, variable.trace_add('write',
+            lambda *_, i=index:self.schedule_height_edit(i))) for index, variable in enumerate(self.height_vars)]
+
+    def open_platform_setup(self):
+        if (self.pending or self.enable_pending or self.stop_pending or self.auto_start
+                or self.state.get('phase') != 'idle'):
+            messagebox.showinfo('先停止当前运行', '先点右上角“关闭使能 / Esc”，等待后台空闲后再配置。\n'
+                                '若显示 fault，请先处理故障并重新扫描恢复控制。', parent=self.root)
+            return
+        reference = self.state.get('fixed_reference', {})
+        if not reference.get('valid'):
+            messagebox.showinfo('先保存固定初始位', '先低速调至机械中位，关闭使能、等待停稳，\n'
+                                '点击下方“保存当前位置为固定初始位”，再配置高度控制。', parent=self.root)
+            return
+        dialog = tk.Toplevel(self.root)
+        dialog.title('三撑杆高度控制设置')
+        dialog.transient(self.root)
+        frame = ttk.Frame(dialog, padding=18)
+        frame.pack(fill='both', expand=True)
+        ttk.Label(frame, text='填写相对已保存中位的可用行程（毫米，预留端点余量）。',
+                  font=('Microsoft YaHei UI',11,'bold')).grid(row=0,column=0,columnspan=3,sticky='w',pady=(0,12))
+        ttk.Label(frame,text='撑杆').grid(row=1,column=0,sticky='w')
+        ttk.Label(frame,text='向上可用 mm').grid(row=1,column=1)
+        ttk.Label(frame,text='向下可用 mm').grid(row=1,column=2)
+        bounds = self.state.get('platform', {}).get('travel_bounds_mm', [])
+        variables = []
+        for i,label in enumerate(('1 号 · 前左','2 号 · 前右','3 号 · 后中')):
+            ttk.Label(frame,text=label).grid(row=i+2,column=0,sticky='w',pady=5)
+            pair = [tk.StringVar(value=f'{bounds[i][1]:g}' if len(bounds)==3 else ''),
+                    tk.StringVar(value=f'{-bounds[i][0]:g}' if len(bounds)==3 else '')]
+            variables.append(pair)
+            for j,variable in enumerate(pair):
+                ttk.Entry(frame,textvariable=variable,width=14).grid(row=i+2,column=j+1,padx=10,pady=5)
+        confirmed = tk.BooleanVar(value=False)
+        ttk.Checkbutton(frame, variable=confirmed, text='已核对实测行程、1/2/3 安装编号及推出/缩回传感器对应方向').grid(
+            row=5,column=0,columnspan=3,sticky='w',pady=12)
+        ttk.Label(frame,text='机构：670/730/730 mm，每转 5 mm；方向读取已扫描的两端传感器配置。\n'
+                  '整体升降取三杆共同可用行程；初次倾角 ±3°、速度 5 mm/s，全部目标受组合行程限制。\n'
+                  '保存会启用高度模式并备份后台原配置，不使能、不移动；然后勾选中位确认并获取控制。',
+                  wraplength=630).grid(row=6,column=0,columnspan=3,sticky='w')
+        def apply():
+            try:
+                values = [(float(up.get()),float(down.get())) for up,down in variables]
+                if not confirmed.get() or not all(math.isfinite(v) and v>0 for pair in values for v in pair):
+                    raise ValueError()
+            except ValueError:
+                messagebox.showerror('参数未完成','上下行程须为大于 0 的毫米数值，并勾选标定确认。',parent=dialog)
+                return
+            if self.configure_height_platform(values, reference['id']):
+                dialog.destroy()
+        ttk.Button(frame,text='保存并启用高度控制',command=apply).grid(row=7,column=0,columnspan=3,sticky='e',pady=(16,0))
+        dialog.grab_set()
+
+    def configure_height_platform(self, values, reference_id):
+        if self.pending or self.state.get('phase') != 'idle':
+            self.status.set('后台当前不空闲，请停止后重新配置。')
+            return False
+        self.neutral_confirmed.set(False)
+        travel = [dict(order=i+1,up_mm=up,down_mm=down) for i,(up,down) in enumerate(values)]
+        def worker():
+            self.client.hello(claim=True)
+            return self.client.configure_platform(travel,reference_id,calibration_confirmed=True)
+        self.task(worker,'configure_platform')
+        return True
+
+    def save_fixed_reference(self):
+        if self.pending or self.auto_start or self.state.get('phase') != 'idle':
+            self.status.set('先点“关闭使能 / Esc”，等待全部轴停稳，再保存固定初始位。')
+            return
+        if not messagebox.askyesno('保存固定初始位', '确认三根撑杆已经调到实际中位并停稳？\n'
+                                  '将保存当前三个轴的位置并覆盖旧中位；本操作不移动电机。', parent=self.root):
+            return
+        def worker():
+            self.client.hello(claim=True)
+            return self.client.save_reference(physical_center_confirmed=True)
+        self.task(worker, 'save_reference')
+
+    def return_fixed_reference(self):
+        if self.pending or self.auto_start or self.enable_pending or self.stop_pending or self.state.get('phase') != 'idle':
+            self.status.set('先关闭使能并等待停稳，再执行固定初始位返回。')
+            return
+        reference = self.state.get('fixed_reference', {})
+        if not reference.get('valid'):
+            self.status.set(reference.get('error') or '尚未保存固定初始位。')
+            return
+        if not messagebox.askyesno('返回固定初始位', '将使能三轴并以 5 rpm / 10 rpm/s 返回保存的固定初始位。\n'
+                                  '确认当前位置与中位之间路径可通行，且轴位置计数未重置？\n'
+                                  '返回后保持使能，可用“关闭使能 / Esc”随时停止。', parent=self.root):
+            return
+        self.start_cancel = threading.Event()
+        cancel = self.start_cancel
+        self.enable_pending = True
+        def worker():
+            self.client.hello(claim=True)
+            if cancel.is_set():
+                raise RuntimeError('返回初始位已取消。')
+            reply = self.client.return_reference(reference['id'], position_reference_confirmed=True)
+            if cancel.is_set():
+                with self.client.lock:
+                    if self.client.run_id == reply['run_id']:
+                        self.client.run_id = None
+                self.client.request('disable', run_id=reply['run_id'])
+            return reply
+        self.task(worker, 'return_reference')
+
+    def cancel_height_edits(self):
+        for index, handle in enumerate(self.height_edit_handles):
+            if handle is not None:
+                self.root.after_cancel(handle)
+                self.height_edit_handles[index] = None
+
+    def schedule_height_edit(self, index):
+        if self.syncing_heights or self.closing:
+            return
+        handle = self.height_edit_handles[index]
+        if handle is not None:
+            self.root.after_cancel(handle)
+        run_id = self.client.run_id
+        def apply():
+            self.height_edit_handles[index] = None
+            if run_id == self.client.run_id:
+                self.commit_height_edit(index)
+        self.height_edit_handles[index] = self.root.after(350, apply)
+
+    def commit_height_edit(self, index):
+        handle = self.height_edit_handles[index]
+        if handle is not None:
+            self.root.after_cancel(handle)
+            self.height_edit_handles[index] = None
+        try:
+            value = float(self.height_vars[index].get())
+        except ValueError:
+            self.status.set('高度未设定：请输入有限的毫米数值。')
+            return
+        self.queue_axis_height(index if index < 3 else None, value)
+
+    def drag_height(self, index, value):
+        if not self.syncing_heights:
+            self.queue_axis_height(index if index < 3 else None, float(value))
+
+    def queue_axis_height(self, index, value):
+        if (self.closing or self.stop_pending or self.start_cancel.is_set()
+                or self.state.get('control_mode') != 'platform' or self.state.get('phase') != 'enabled'
+                or not self.client.session or not self.client.run_id
+                or self.client.run_id != self.state.get('run_id')):
+            return
+        bounds = self.state.get('platform', {}).get('travel_bounds_mm', [])
+        if not math.isfinite(value) or len(bounds) != 3:
+            self.status.set('高度未设定：请输入有限的毫米数值并确认后台行程配置。')
+            return
+        values = list(self.height_values)
+        for i in range(3) if index is None else [index]:
+            if not bounds[i][0] <= value <= bounds[i][1]:
+                self.status.set(f'高度未设定：{i+1} 号撑杆需在 {bounds[i][0]:g}～{bounds[i][1]:g} mm 内。')
+                return
+            values[i] = value
+        self.height_values = values
+        if index is None:
+            self.cancel_height_edits()
+        elif self.height_edit_handles[index] is not None:
+            self.root.after_cancel(self.height_edit_handles[index])
+            self.height_edit_handles[index] = None
+        self.show_height_values(index is None, index)
+
+    def show_height_values(self, common=False, edited_index=None):
+        self.syncing_heights = True
+        try:
+            for index, value in enumerate(self.height_values):
+                if edited_index is None or index == edited_index:
+                    self.height_vars[index].set(f'{value:g}')
+                self.height_sliders[index].set(value)
+            if common or len(set(self.height_values)) == 1:
+                self.height_vars[3].set(f'{self.height_values[0]:g}')
+                self.height_sliders[3].set(self.height_values[0])
+        finally:
+            self.syncing_heights = False
 
     def show(self):
         self.root.deiconify()
@@ -159,6 +392,8 @@ class DebugWindow:
         self.start_cancel.set()
         self.latest_target = None
         self.latest_profile = None
+        self.cancel_height_edits()
+        self.neutral_confirmed.set(False)
         self.cancel_edit_timer('profile_edit_handle')
         self.finish_target_edit()
         if self.stop_pending or not self.client.run_id:
@@ -186,7 +421,22 @@ class DebugWindow:
 
     def flush_motion(self):
         if (self.motion_pending or not self.client.run_id or
+                self.stop_pending or self.start_cancel.is_set() or
                 self.state.get('phase')!='enabled' or self.client.run_id!=self.state.get('run_id')):
+            return
+        if self.state.get('control_mode') == 'reference':
+            return
+        if self.state.get('control_mode') == 'platform':
+            if time.monotonic() - self.last_feedback > .35:
+                self.stop()
+                return
+            if time.monotonic() - self.last_height_send < 1/30:
+                return
+            run_id, values = self.client.run_id, list(self.height_values)
+            self.last_height_send = time.monotonic()
+            self.motion_run = run_id
+            self.task(lambda:self.client.heights(values, expected_run_id=run_id,
+                                                retry_timeout=.08), 'heights', motion=True)
             return
         if self.latest_profile is not None:
             run_id,rpm,acceleration=self.latest_profile
@@ -204,6 +454,9 @@ class DebugWindow:
     def claim(self):
         if (self.auto_start or self.enable_pending or self.stop_pending or
                 self.client.session and self.state.get('phase') not in ('idle','fault')):
+            return
+        if self.state.get('platform', {}).get('configured') and not self.neutral_confirmed.get():
+            self.status.set('请先确认三根撑杆均处于标定初始位，再获取三轴调试控制。')
             return
         self.start_cancel = threading.Event()
         self.start_deadline = time.monotonic()+15
@@ -276,9 +529,16 @@ class DebugWindow:
         if not self.selected:
             messagebox.showerror('电机选择','请先扫描并选择电机。',parent=self.root)
             return
+        platform = self.state.get('platform', {})
+        platform_mode = platform.get('configured', False)
+        if platform_mode and not self.neutral_confirmed.get():
+            self.auto_start = None
+            self.status.set('平台未使能：请确认三根撑杆处于标定初始位。')
+            return
         try:
-            rpm, acceleration = float(self.rpm.get()),float(self.acceleration.get())
-            if not all(math.isfinite(v) and v>0 for v in (rpm,acceleration)):
+            rpm, acceleration = ((60., 120.) if platform_mode else
+                                 (float(self.rpm.get()),float(self.acceleration.get())))
+            if not platform_mode and not all(math.isfinite(v) and v>0 for v in (rpm,acceleration)):
                 raise ValueError()
         except ValueError:
             self.auto_start=None
@@ -289,6 +549,12 @@ class DebugWindow:
             self.start_cancel=threading.Event()
         cancel=self.start_cancel
         orders=sorted(self.selected)
+        if platform_mode:
+            orders = list(platform['orders'])
+            self.selected = set(orders)
+            self.height_values = [0., 0., 0.]
+            self.cancel_height_edits()
+            self.show_height_values(common=True)
         self.latest_target = None
         self.latest_profile = None
         self.target_values = {order:0. for order in self.selected}
@@ -296,7 +562,8 @@ class DebugWindow:
         def worker():
             if cancel.is_set():
                 raise RuntimeError('使能已取消。')
-            reply=self.client.enable(orders,rpm,acceleration)
+            reply=(self.client.enable_platform(orders, platform['calibration_id'], reference_confirmed=True)
+                   if platform_mode else self.client.enable(orders,rpm,acceleration))
             # Stop/close can arrive while the enable ACK is in flight. Cancel
             # that exact run even if no run_id was available when Stop was pressed.
             with self.client.lock:
@@ -367,7 +634,7 @@ class DebugWindow:
             self.status.set('速度和加减速度必须为大于 0 的有限数值。')
             return
         self.sync_profile_sliders()
-        if (not self.stop_pending and self.client.session and self.client.run_id and
+        if (self.state.get('control_mode') not in ('platform','reference') and not self.stop_pending and self.client.session and self.client.run_id and
                 self.state.get('phase')=='enabled' and self.client.run_id==self.state.get('run_id')):
             self.latest_profile=(self.client.run_id,rpm,acceleration)
 
@@ -398,7 +665,7 @@ class DebugWindow:
 
     def queue_axis_target(self,order,value):
         orders=self.state.get('orders',[])
-        if (self.state.get('phase')!='enabled' or not self.client.session
+        if (self.state.get('control_mode') in ('platform','reference') or self.state.get('phase')!='enabled' or not self.client.session
                 or not self.client.run_id or self.client.run_id!=self.state.get('run_id')
                 or order is not None and order not in orders):
             return
@@ -436,6 +703,11 @@ class DebugWindow:
                           else '各轴目标不同；选择单轴调节或拖动统一目标')
 
     def edit_target(self,event):
+        if self.state.get('control_mode') == 'reference':
+            return 'break'
+        if self.state.get('platform', {}).get('configured'):
+            self.controls.select(self.height_controls)
+            return 'break'
         row=self.tree.identify_row(event.y)
         column=self.tree.identify_column(event.x)
         if not row or column!=f"#{list(self.tree['columns']).index('target')+1}":
@@ -505,10 +777,91 @@ class DebugWindow:
         if editor is not None:
             editor.destroy()
 
+    def render_height_controls(self, state, idle, controllable):
+        platform = state.get('platform', {})
+        configured = platform.get('configured', False)
+        self.configure_changed(self.platform_setup_button, state='normal' if platform.get('setup_available') else 'disabled')
+        active = configured and controllable and state.get('control_mode') == 'platform'
+        if self.height_active and not active:
+            self.neutral_confirmed.set(False)
+        self.height_active = active
+        if configured != self.height_configured:
+            self.height_configured = configured
+            self.controls.tab(self.motor_controls, state='disabled' if configured else 'normal')
+            self.controls.select(self.height_controls if configured else self.motor_controls)
+        self.configure_changed(self.neutral_box, state='normal' if configured and idle else 'disabled')
+        self.configure_changed(self.neutral_box, text=(
+            '已确认三根撑杆处于保存的固定初始位（关闭使能后确认）' if configured else
+            '先关闭使能并保存固定初始位，再点右上方“配置 / 启用高度控制”'))
+        reference = state.get('fixed_reference', {})
+        self.configure_changed(self.save_reference_button, state='normal' if reference.get('available') and idle
+                               and state.get('phase') == 'idle' and not self.pending else 'disabled')
+        self.configure_changed(self.return_reference_button, state='normal' if reference.get('valid') and idle
+                               and state.get('phase') == 'idle' and not self.pending else 'disabled')
+        bounds = platform.get('travel_bounds_mm', [])
+        if len(bounds) == 3 and bounds != self.height_bounds:
+            self.height_bounds = bounds
+            self.syncing_heights = True
+            try:
+                for index, (low, high) in enumerate(bounds):
+                    self.height_sliders[index].configure(from_=low, to=high)
+                heave = platform.get('max_heave_mm', 10)
+                self.height_sliders[3].configure(from_=max(-heave, *(pair[0] for pair in bounds)),
+                                                to=min(heave, *(pair[1] for pair in bounds)))
+            finally:
+                self.syncing_heights = False
+        if state.get('run_id') != self.height_run:
+            self.height_run = state.get('run_id')
+            self.height_values = [0., 0., 0.]
+            self.last_height_send = 0
+            self.cancel_height_edits()
+            self.show_height_values(common=True)
+        if not active:
+            self.cancel_height_edits()
+            reported = platform.get('lengths_mm', [])
+            if len(reported) == 3:
+                self.height_values = list(reported)
+                self.show_height_values()
+        for widget in (*self.height_entries, *self.height_sliders, self.height_zero_button):
+            self.configure_changed(widget, state='normal' if active and len(bounds) == 3 else 'disabled')
+        actual = reference.get('heights_mm', []) if reference.get('valid') else platform.get('actual_lengths_mm', [])
+        for index in range(3):
+            value = actual[index] if index < len(actual) else None
+            suffix = f" · [{bounds[index][0]:g}, {bounds[index][1]:g}]" if len(bounds) == 3 else ''
+            self.configure_changed(self.height_actual[index], text=('实际 —' if value is None else f'实际 {value:.2f} mm') + suffix)
+        if state.get('control_mode') == 'reference' and state.get('phase') in ('enabling','enabled'):
+            hint = '正在低速返回固定初始位；观察三轴实际高度接近 0，Esc 可停止，返回后仍保持使能。'
+        elif not configured:
+            hint = ('当前是角度模式，请先关闭使能。' if state.get('phase') in ('enabling','enabled') else '')
+            hint += '高度未配置：保存中位 → 配置上下行程 → 勾选中位确认 → 获取控制后拖动。'
+        elif not idle and not active:
+            hint = '当前运行未结束，请先关闭使能；待停稳后才能确认初始位。'
+        else:
+            hint = 'UE 高度模拟 · 约 30 Hz 持续发送' if active else '先返回固定初始位，再关闭使能、确认中位并获取平台控制。'
+        hint += (' 已保存固定中位。' if reference.get('valid') else
+                 ' '+reference['error'] if reference.get('error') else ' 首次请低速调至中位、关闭使能，再保存固定初始位。')
+        self.configure_changed(self.height_stream_label, text=hint)
+
+    @staticmethod
+    def configure_changed(widget, **options):
+        changed = {key: value for key, value in options.items() if str(widget.cget(key)) != str(value)}
+        if changed:
+            widget.configure(**changed)
+
     def render(self,state,feedback_time=None):
         self.last_render=time.monotonic()
         self.last_feedback=feedback_time if feedback_time is not None else self.last_render
         self.state=state
+        platform = state.get('platform', {})
+        platform_configured = platform.get('configured', False)
+        actual_heights = dict(zip(platform.get('orders', []), platform.get('actual_lengths_mm', [])))
+        target_heights = dict(zip(platform.get('orders', []), platform.get('lengths_mm', [])))
+        for key, text in (('travel', '高度 mm' if platform_configured else '偏移 °'),
+                          ('target', '目标高度 mm' if platform_configured else '目标偏移 °')):
+            if self.tree.heading(key, 'text') != text:
+                self.tree.heading(key, text=text)
+        self.configure_changed(self.limit_hint, text='平台模式：任一端点限位或持续跟随误差超限，停止全部三轴。' if platform_configured else
+                                  '两端限位分别监视；触发后仅允许反向离开，两端同时触发时禁止运动。')
         adapter=state.get('adapter')
         if adapter and adapter not in self.adapter_names:
             self.adapter_names=[adapter]
@@ -533,7 +886,8 @@ class DebugWindow:
             a=axes.get(order,{})
             sensor=limits.get(order,{})
             def endpoint_text(state_key, input_key, allowed):
-                text={'triggered':f'● 已触发（只可{allowed}）','clear':'○ 未触发',
+                triggered_text = '● 已触发（平台全轴停止）' if platform_configured else f'● 已触发（只可{allowed}）'
+                text={'triggered':triggered_text,'clear':'○ 未触发',
                       'unconfigured':'未配置传感器','unavailable':'反馈失效',
                       'no_sensor':'无传感器 / 未知'}.get(sensor.get(state_key),'等待反馈')
                 if sensor.get(input_key):
@@ -548,9 +902,11 @@ class DebugWindow:
                 return '?' if value is None else '1' if value else '0'
             inputs=f"{bit('di1')} / {bit('di2')} · {bit('positive_limit')} / {bit('negative_limit')}"
             error=a.get('error_code',d.get('error_code',0))
+            travel = actual_heights.get(order) if platform_configured else a.get('travel_degrees', 0.)
+            target = target_heights.get(order, 0.) if platform_configured else self.target_values.get(order, 0.)
             values=('☑' if order in self.selected else '☐',order,d['id'],f"{d['name']} / {d['motor_code']}",
-                    a.get('position',d['position']),f"{a.get('travel_degrees') or 0:.3f}",
-                    f"{self.target_values.get(order,0.):g}",
+                    a.get('position',d['position']),f'{travel:.3f}' if travel is not None else '—',
+                    f'{target:g}',
                     f"报警 0x{error:04X}" if error else '使能' if a.get('enabled') else '未使能',
                     limit_text,inputs,retraction_text)
             triggered=sensor.get('triggered') or sensor.get('retraction_triggered')
@@ -573,15 +929,17 @@ class DebugWindow:
         self.stop_button.configure(state='normal' if self.auto_start or self.enable_pending or
                                    self.client.run_id and state.get('phase') in ('enabling','enabled') else 'disabled')
         controllable=owner and self.client.run_id==state.get('run_id') and state.get('phase')=='enabled'
+        self.render_height_controls(state, idle, controllable)
+        motor_controllable = controllable and state.get('control_mode') not in ('platform','reference')
         for widget in (self.rpm_entry,self.acceleration_entry,self.rpm_slider,self.acceleration_slider):
-            widget.configure(state='normal' if owner and (idle or controllable) else 'disabled')
+            widget.configure(state='normal' if not platform_configured and owner and (idle or motor_controllable) else 'disabled')
         if controllable and self.profile_run != state.get('run_id'):
             self.profile_run=state['run_id']
             profile=state.get('profile') or {}
             if profile:
                 self.show_profile(profile)
-        self.slider.configure(state='normal' if controllable else 'disabled')
-        self.zero_button.configure(state='normal' if controllable else 'disabled')
+        self.slider.configure(state='normal' if motor_controllable else 'disabled')
+        self.zero_button.configure(state='normal' if motor_controllable else 'disabled')
         active_orders=state.get('orders',[]) if controllable else []
         if self.slider_orders!=[None]+active_orders:
             self.slider_orders=[None]+list(active_orders)
@@ -589,7 +947,7 @@ class DebugWindow:
                                      [f'电机 {order}（链路位置 {order}）' for order in active_orders])
             self.axis_box.current(0)
             self.sync_slider()
-        self.axis_box.configure(state='readonly' if controllable else 'disabled')
+        self.axis_box.configure(state='readonly' if motor_controllable else 'disabled')
         if not controllable:
             self.latest_target=None
             self.latest_profile=None
@@ -601,7 +959,7 @@ class DebugWindow:
         self.status.set(f"{state.get('phase','?')} · {state.get('message','')} · " +
                         (input_text + ' · ' if input_text else '') +
                         ('调试面板持有控制权' if owner else '只读监视；外部程序可获取控制权'))
-        if controllable:
+        if motor_controllable:
             profile=state.get('applied_profile') or {}
             if profile:
                 self.status.set(self.status.get()+f" · 已应用 {profile['rpm']:g} rpm / {profile['acceleration_rpm_s']:g} rpm/s（拖动或修改数字自动设定）")
@@ -618,11 +976,11 @@ class DebugWindow:
                 kind,result,label=self.events.get_nowait()
                 if label=='stop':
                     self.stop_pending=False
-                elif label in ('target','profile'):
+                elif label in ('target','profile','heights'):
                     self.motion_pending=False
                 elif kind!='notice':
                     self.pending=False
-                if label in ('enable','auto_enable'):
+                if label in ('enable','auto_enable','return_reference'):
                     self.enable_pending=False
                 if label in ('claim','auto_scan','auto_enable'):
                     if kind=='error':
@@ -635,6 +993,9 @@ class DebugWindow:
                         elif label=='auto_enable':
                             self.auto_start=None
                 if kind in ('error','notice'):
+                    if label == 'heights' and self.motion_run == self.client.run_id:
+                        # Revoke the stream on unknown/rejected outcomes; no automatic restart.
+                        self.stop()
                     if label=='target' and self.motion_run==self.client.run_id and self.latest_target is None:
                         reported=self.client.state
                         self.target_values=dict(zip(reported.get('orders',[]),reported.get('targets_deg',[])))
@@ -674,6 +1035,8 @@ class DebugWindow:
                 self.tree.set(row,'retraction','反馈失联')
                 self.tree.set(row,'inputs','? / ? · ? / ?')
                 self.tree.item(row,tags=('limit_unknown',))
+            for label in self.height_actual[:3]:
+                label.configure(text='实际高度：反馈失联')
         self.advance_start()
         self.flush_motion()
         if not self.pending:
@@ -702,6 +1065,11 @@ class DebugWindow:
         for variable, trace in self.profile_edit_traces:
             variable.trace_remove('write', trace)
         self.profile_edit_traces.clear()
+        for variable, trace in self.height_edit_traces:
+            variable.trace_remove('write', trace)
+        self.height_edit_traces.clear()
+        self.height_vars.clear()
+        self.neutral_confirmed = None
         # Tk variables must be finalized on this UI thread. Destroyed windows
         # may otherwise be collected by a network worker during a later run.
         for name in ('adapter','rpm','acceleration','center','span','position','slider_axis','status'):

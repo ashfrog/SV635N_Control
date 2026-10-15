@@ -26,7 +26,7 @@ void USV635NMotionComponent::BeginPlay()
     FIPv4Address Address;
     if (!FIPv4Address::Parse(Host, Address) || Port < 1 || Port > 65535
         || !FMath::IsFinite(SendRateHz) || SendRateHz < 10 || SendRateHz > 60
-        || !FMath::IsFinite(PoseInputTimeout) || PoseInputTimeout < .1f || PoseInputTimeout > .5f)
+        || !FMath::IsFinite(HeightInputTimeout) || HeightInputTimeout < .1f || HeightInputTimeout > .5f)
     { LastError = TEXT("Invalid endpoint or timing configuration"); return; }
     ServerAddress = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->CreateInternetAddr();
     ServerAddress->SetIp(Address.Value); ServerAddress->SetPort(Port);
@@ -35,12 +35,12 @@ void USV635NMotionComponent::BeginPlay()
     LastStatus = Socket ? TEXT("Observing backend; operator arm required") : TEXT("UDP socket creation failed");
 }
 
-void USV635NMotionComponent::SetPlatformPose(float HeaveMillimetres, float PitchDegrees, float RollDegrees)
+void USV635NMotionComponent::SetPlatformHeights(float FrontLeftMillimetres, float FrontRightMillimetres, float RearMillimetres)
 {
-    if (!FMath::IsFinite(HeaveMillimetres) || !FMath::IsFinite(PitchDegrees) || !FMath::IsFinite(RollDegrees))
-    { FailSafe(TEXT("Non-finite platform pose")); return; }
-    Pose = FVector(HeaveMillimetres, PitchDegrees, RollDegrees);
-    LastPoseTime = FPlatformTime::Seconds();
+    if (!FMath::IsFinite(FrontLeftMillimetres) || !FMath::IsFinite(FrontRightMillimetres) || !FMath::IsFinite(RearMillimetres))
+    { FailSafe(TEXT("Non-finite support heights")); return; }
+    Heights = FVector(FrontLeftMillimetres, FrontRightMillimetres, RearMillimetres);
+    LastHeightTime = FPlatformTime::Seconds();
 }
 
 bool USV635NMotionComponent::ArmPlatform(bool PhysicalNeutralConfirmed)
@@ -50,8 +50,8 @@ bool USV635NMotionComponent::ArmPlatform(bool PhysicalNeutralConfirmed)
         || !PhysicalNeutralConfirmed || !FeedbackValid || Now - LastFeedbackTime > FeedbackTimeout
         || !PlatformConfigured || CalibrationId.IsEmpty() || CalibrationId != BackendCalibrationId
         || Orders.Num() != 3 || Orders != MappedOrders || Phase != TEXT("idle")
-        || LastPoseTime < 0 || Now - LastPoseTime > PoseInputTimeout)
-    { LastError = TEXT("Arm requires fresh pose/feedback, matching calibration, idle backend and confirmed physical neutral"); return false; }
+        || LastHeightTime < 0 || Now - LastHeightTime > HeightInputTimeout)
+    { LastError = TEXT("Arm requires fresh heights/feedback, matching calibration, idle backend and confirmed physical neutral"); return false; }
     WantEnable = true; LastError.Reset();
     const auto Object = Request(TEXT("hello"));
     Object->SetBoolField(TEXT("claim"), true); Reliable(Object);
@@ -119,15 +119,17 @@ void USV635NMotionComponent::SendStream(const FString& Kind)
     const auto Object = Request(Kind);
     Object->SetStringField(TEXT("run_id"), RunId);
     Object->SetNumberField(TEXT("seq"), static_cast<double>(Sequence++));
-    if (Kind == TEXT("pose"))
+    if (Kind == TEXT("heights"))
     {
-        const auto Values = MakeShared<FJsonObject>();
-        Values->SetNumberField(TEXT("heave_mm"), Pose.X); Values->SetNumberField(TEXT("pitch_deg"), Pose.Y);
-        Values->SetNumberField(TEXT("roll_deg"), Pose.Z); Object->SetObjectField(TEXT("pose"), Values);
+        TArray<TSharedPtr<FJsonValue>> Values;
+        Values.Add(MakeShared<FJsonValueNumber>(Heights.X));
+        Values.Add(MakeShared<FJsonValueNumber>(Heights.Y));
+        Values.Add(MakeShared<FJsonValueNumber>(Heights.Z));
+        Object->SetArrayField(TEXT("heights_mm"), Values);
     }
     FString Id; Object->TryGetStringField(TEXT("id"), Id);
     StreamRequests.Add(Id, FPlatformTime::Seconds()); SendJson(Object);
-    // Do not retry old poses; the next current pose replaces them.
+    // Do not retry old heights; the next current frame replaces them.
 }
 
 bool USV635NMotionComponent::ApplyState(const TSharedPtr<FJsonObject>& Object)
@@ -275,8 +277,8 @@ void USV635NMotionComponent::TickComponent(float DeltaTime, ELevelTick TickType,
     if (!Socket || Ending) return;
     const double Now = FPlatformTime::Seconds();
     // Revoke intent before handling a late enable ACK after a game hitch.
-    if (WantEnable && (LastPoseTime < 0 || Now - LastPoseTime > PoseInputTimeout))
-        FailSafe(TEXT("Game pose stream stale; explicit rearm required"));
+    if (WantEnable && (LastHeightTime < 0 || Now - LastHeightTime > HeightInputTimeout))
+        FailSafe(TEXT("Game height stream stale; explicit rearm required"));
     ReceiveFeedback();
     if (FeedbackValid && Now - LastFeedbackTime > FeedbackTimeout)
     { FeedbackValid = false; FailSafe(TEXT("Backend feedback stale; explicit rearm required")); }
@@ -293,7 +295,7 @@ void USV635NMotionComponent::TickComponent(float DeltaTime, ELevelTick TickType,
     if (WantEnable && FeedbackValid && !RunId.IsEmpty() && Now - LastSendTime >= 1. / SendRateHz)
     {
         LastSendTime = Now;
-        if (Phase == TEXT("enabled")) SendStream(TEXT("pose"));
+        if (Phase == TEXT("enabled")) SendStream(TEXT("heights"));
         else if (Phase == TEXT("enabling")) SendStream(TEXT("heartbeat"));
     }
     if (!WantEnable && !Pending.IsValid() && !Session.IsEmpty() && FeedbackValid

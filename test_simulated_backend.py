@@ -50,8 +50,13 @@ class SimulatorTests(unittest.TestCase):
     def test_standalone_simulator_process_accepts_v1_platform_commands(self):
         with tempfile.TemporaryDirectory() as folder:
             output=Path(folder)/'simulator.log'
+            config=Path(folder)/'simulation.json'
+            config.write_bytes(Path(__file__).with_name('backend.platform.example.json').read_bytes())
             with output.open('wb') as log:
-                process=subprocess.Popen([sys.executable,'-S','-u','simulated_backend.py','--port','0'],
+                # Windows venv launchers can leave their child holding the log
+                # after terminate(). The stdlib-only simulator needs no venv.
+                process=subprocess.Popen([getattr(sys, '_base_executable', sys.executable),
+                    '-S','-u','simulated_backend.py','--port','0','--config',str(config)],
                     cwd=Path(__file__).resolve().parent,stdout=log,stderr=log)
                 try:
                     deadline=time.monotonic()+5
@@ -64,6 +69,8 @@ class SimulatorTests(unittest.TestCase):
                     port=int(text.split('127.0.0.1:',1)[1].split(',',1)[0])
                     with MotorClient(port=port) as client:
                         client.hello();client.wait_for(('idle',))
+                        client.save_reference(physical_center_confirmed=True)
+                        client.wait_for(('idle',))
                         client.enable_platform([1,2,3],'simulation-only-v1',reference_confirmed=True)
                         client.wait_for(('enabled',))
                         client.pose(0,0,0)

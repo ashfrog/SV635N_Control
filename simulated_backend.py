@@ -1,6 +1,7 @@
 """UDP platform simulator. Never loads APS DLLs or connects physical motors."""
 import argparse
 from copy import deepcopy
+from dataclasses import replace
 import math
 from pathlib import Path
 import signal
@@ -60,20 +61,29 @@ class SimulatedController:
 
     def run_continuous(self, devices, commands, stop, callback):
         self._thread()
+        from fixed_reference import check_neutral, reference_targets
+        if hasattr(commands, 'neutral_reference'):
+            check_neutral(commands.neutral_reference, self.devices)
+        origins = {d.order: d.position for d in self.devices}
         positions, speeds = [0.]*3, [0.]*3
         targets = [0.]*3
         last, last_status = time.monotonic(), 0.
         commands.mark_ready()
+        if hasattr(commands, 'fixed_reference'):
+            commands.submit(reference_targets(commands.fixed_reference, self.devices,
+                origins, commands.rpm, commands.acceleration))
         callback(dict(kind='continuous_ready'))
         while not stop.is_set() and not commands.closed:
             now = time.monotonic();dt = min(.05, now-last);last=now
             frame=commands.pop()
             if frame:
                 targets=list(frame.targets)
+            _, rpm, acceleration_rpm_s = commands.profile()
             for i, leg in enumerate(self.geometry.legs):
                 gap=targets[i]-positions[i]
-                vmax=self.geometry.config['max_leg_speed_mm_s']*360/leg['mm_per_rev']
-                acceleration=self.geometry.config['max_leg_acceleration_mm_s2']*360/leg['mm_per_rev']
+                vmax=min(rpm*6, self.geometry.config['max_leg_speed_mm_s']*360/leg['mm_per_rev'])
+                acceleration=min(acceleration_rpm_s*6,
+                    self.geometry.config['max_leg_acceleration_mm_s2']*360/leg['mm_per_rev'])
                 velocity=math.copysign(min(vmax,math.sqrt(2*acceleration*abs(gap))),gap) if gap else 0.
                 speeds[i]+=max(-acceleration*dt,min(acceleration*dt,velocity-speeds[i]))
                 step=speeds[i]*dt
@@ -82,13 +92,17 @@ class SimulatedController:
                 else:
                     positions[i]+=step
             if now-last_status>=.05:
+                self.devices = [replace(d, position=origins[d.order]+positions[i])
+                                for i,d in enumerate(self.devices)]
                 callback(dict(kind='status', axes=[dict(order=d.order,axis_id=d.axis_id,
-                    slave_id=d.slave_id, position=positions[i], travel_degrees=positions[i],
+                    slave_id=d.slave_id, position=origins[d.order]+positions[i], travel_degrees=positions[i],
                     enabled=True,error_code=0) for i,d in enumerate(self.devices)],
                     limits=self.read_inputs(self.devices)))
                 last_status=now
             commands.wait_for_update(.005)
         commands.close()
+        self.devices = [replace(d, position=origins[d.order]+positions[i])
+                        for i,d in enumerate(self.devices)]
         return dict(stopped=True,all_disabled=True,cleanup_errors=[],error=None)
 
 
@@ -101,7 +115,8 @@ def main():
     options=deepcopy(config['platform']);options['enabled']=True
     geometry=PlatformGeometry(options)
     controller=SimulatedController(geometry)
-    service=MotorService(platform_options=options,hardware_controller=controller)
+    service=MotorService(platform_options=options,hardware_controller=controller,
+                         reference_path=args.config.resolve().parent/'platform.simulated.reference.json')
     server=None;quit_event=threading.Event()
     signal.signal(signal.SIGINT,lambda *_:quit_event.set())
     signal.signal(signal.SIGTERM,lambda *_:quit_event.set())

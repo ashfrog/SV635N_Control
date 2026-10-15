@@ -42,6 +42,36 @@ orders 须为不同的升序链路位置，不限定三轴。返回 `run_id`，�
 
 ## 三撑杆平台模式
 
+### 在线配置高度控制
+
+正式后台的 `state.platform.setup_available=true` 时，停止并保存固定中位后，可提交以下请求；必须持有 session，`control_seq` 严格递增：
+
+```json
+{"v":1,"id":"setup1","type":"configure_platform","session":"...","control_seq":5,"reference_id":"保存的中位版本","calibration_confirmed":true,"travel_mm":[{"order":1,"up_mm":50,"down_mm":50},{"order":2,"up_mm":50,"down_mm":50},{"order":3,"up_mm":50,"down_mm":50}]}
+```
+
+上下行程为实测正毫米数值，操作员确认编号和两端传感器物理对应方向。后台使用本项目已确认的 670/730/730 mm 机构和每转 5 mm，从已扫描轴的端点方向计算各轴角度符号；保存新标定版本并启用高度模式，不使能、不移动。仅 idle 接受，固定中位版本必须匹配。后台配置文件的其它字段保留，首次保存前备份为 `backend.config.json.before-platform.bak`；写入失败不切换运行配置。
+
+初次平台限制为整体升降取三杆上下行程的共同可用范围、倾角 ±3°、速度 5 mm/s、加速度 10 mm/s²；每帧还需满足三杆组合行程。保存后重新确认中位并请求平台使能，不能将当前角度模式直接切换为高度运行。端口 5006 的独立模拟服务已启用模拟配置，无需本操作。
+
+### 固定初始位
+
+以下请求需要控制 session 和严格递增的 control_seq，适用三个链路位置 1/2/3。停止、处于 idle 且三根撑杆确在物理中位后保存：
+
+```json
+{"v":1,"id":"centre1","type":"save_reference","session":"...","control_seq":3,"physical_center_confirmed":true}
+```
+
+保存异步核对 disabled 三轴的两次静止位置，不使能、不移动；ACK 只表示开始，等待 idle 和 `state.fixed_reference.valid=true`。位置和轴身份写入后台配置旁的文件。重新保存改变 reference id，旧版本返回请求拒绝。返回需要再次明确确认坐标计数未重置且路径可通行：
+
+```json
+{"v":1,"id":"return1","type":"return_reference","session":"...","control_seq":4,"reference_id":"保存版本","position_reference_confirmed":true}
+```
+
+返回 run_id 后保持 heartbeat，后台采用独立 `control_mode=reference`，重新扫描并校验身份，以 5 rpm / 10 rpm/s 回到保存中位；返回后保持使能，显式 disable 停止。reference 模式禁止 target/heights/pose/profile 覆盖返回路径；端点触发停止全轴。停止或重启后文件保留，但位置计数必须仍属于原坐标。清零、坐标重置或更换硬件需重新标定；服务不自动寻找限位或设置机械原点。
+
+`state.fixed_reference` 包含 `available/saved/valid/id/error` 及 `heights_mm`（相对保存中位的三轴高度，按每转 5 mm 及核对的端点方向转换，方向未知为 null）。valid 表示文件/轴身份通过检查，不证明物理中位或计数坐标未被重置。正式平台使能会再核对当前原始位置与保存位置一致，不能将偏离中位的停止处捕获为新原点。
+
 现有电机模式保持兼容。平台扩展使用同一 v1 协议、认证、控制权和去重规则，必须先完成后台机构配置。请求：
 
 ```json
@@ -50,7 +80,17 @@ orders 须为不同的升序链路位置，不限定三轴。返回 `run_id`，�
 
 `orders` 必须等于三个配置撑杆的升序编号。`reference_confirmed` 必须为布尔 true，表示操作员已核对物理中位；后台不能验证该人工声明。速度/加速度由后台平台配置生成，平台模式拒绝 target/profile，不能从客户端覆盖。配置平台后普通电机 enable 默认也被禁止，除非维护配置显式允许。
 
-取得 run_id 后开始心跳，等 phase=enabled 再持续发送最新姿态：
+取得 run_id 后开始心跳，等 phase=enabled 再持续发送最新三点高度（当前 UE 与界面使用）：
+
+```json
+{"v":1,"id":"height1","type":"heights","session":"...","run_id":"...","seq":3,"heights_mm":[5,-3,0]}
+```
+
+`heights_mm` 必须是三个有限数值，顺序与配置 `orders` 一致，本机构为 `[前左1号, 前右2号, 后中3号]`。单位 mm，相对已标定初始位的绝对偏移；0 回到初始位并保持使能，正数向上推，负数向下拉。重复值不累加。每帧原子更新三轴，校验所有撑杆行程与由三点恢复的平台升降/倾斜范围；一轴越界不允许另外两轴部分执行。当前运行缺失、null、长度错误或无效高度均停止全轴；旧 run_id、未授权及重复/乱序报文不会停止当前运行或续期。
+
+`heights` 和兼容 `pose` 共用目标序号通道，与心跳独立。高度有效新帧续期网络心跳及平台输入计时；仅 heartbeat 无法维持平台运行。使能就绪后必须在 `pose_timeout_s` 内收到首帧，静止时也应持续发送 30～60 Hz；高度帧不重试，后续最新帧覆盖旧目标。过期后需重新确认物理初始位并显式使能，不能恢复旧 run。
+
+后台保留姿态输入兼容既有调用方：
 
 ```json
 {"v":1,"id":"pose1","type":"pose","session":"...","run_id":"...","seq":3,"pose":{"heave_mm":1,"pitch_deg":0.5,"roll_deg":-0.5}}
@@ -60,7 +100,7 @@ pose 对象只能包含这三个有限数值字段；毫米/度的坐标定义�
 
 当前运行的越界/无效姿态停止全部撑杆；旧 run_id 或未授权请求不能停止当前平台。所有姿态与组合撑杆行程都验证通过才更新目标，不截断单个撑杆。任意端点触发、配置传感器反馈失效或持续跟随误差超限，均停止全轴；驱动器故障沿用后台故障清理流程。停止/重启需要再次确认标定中位，不能把停止位置自动当成中位。
 
-state 新增 `control_mode` 和 `platform`：`configured/calibration_id/orders` 标识平台配置，`pose/lengths_mm` 是最近接受的姿态和期望杆长偏移，`commanded_deg` 是平滑器生成的最近中间轴目标，`actual_lengths_mm` 是由轴反馈换算的杆长偏移（未知为 null），`pose_age_s/pose_timeout_s` 表示姿态流年龄/超时。`targets_deg` 是最终轴目标，ACK 不表示最终姿态已到达。`hardware_backend=simulated` 只表示无硬件模拟，不应作为实机反馈。
+state 新增 `control_mode` 和 `platform`：`configured/calibration_id/orders` 标识平台配置，`pose` 是最近接受或由高度恢复的姿态，`lengths_mm` 是三个期望高度偏移，`travel_bounds_mm` 是每轴可用高度范围 `[min,max]`，`max_heave_mm` 是整体升降上限。`commanded_deg` 是平滑器生成的最近中间轴目标，`actual_lengths_mm` 是由轴反馈换算的杆长偏移（未知为 null），`pose_age_s/pose_timeout_s` 表示高度/兼容姿态流年龄与超时（字段名保持兼容）。`targets_deg` 是最终轴目标，ACK 不表示最终位置已到达。`hardware_backend=simulated` 只表示无硬件模拟，不应作为实机反馈。
 
 ## 心跳与目标
 

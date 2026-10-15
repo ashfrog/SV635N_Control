@@ -28,9 +28,9 @@
     "pose_timeout_s": 0.25,
     "command_interval_s": 0.02,
     "legs": [
-      {"order": 1, "x_mm": 200, "y_mm": 0, "mm_per_rev": 5, "extension_sign": 1, "min_mm": -20, "max_mm": 20},
-      {"order": 2, "x_mm": -100, "y_mm": 150, "mm_per_rev": 5, "extension_sign": 1, "min_mm": -20, "max_mm": 20},
-      {"order": 3, "x_mm": -100, "y_mm": -150, "mm_per_rev": 5, "extension_sign": 1, "min_mm": -20, "max_mm": 20}
+      {"order": 1, "x_mm": 216.19821152513418, "y_mm": -335, "mm_per_rev": 5, "extension_sign": 1, "min_mm": -20, "max_mm": 20},
+      {"order": 2, "x_mm": 216.19821152513418, "y_mm": 335, "mm_per_rev": 5, "extension_sign": 1, "min_mm": -20, "max_mm": 20},
+      {"order": 3, "x_mm": -432.39642305026837, "y_mm": 0, "mm_per_rev": 5, "extension_sign": 1, "min_mm": -20, "max_mm": 20}
     ]
   }
 }
