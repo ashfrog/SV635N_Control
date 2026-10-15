@@ -79,6 +79,17 @@ class UITests(unittest.TestCase):
             self.assertEqual(self.service.phase,'idle')
             self.assertEqual(len(self.masters),count)
 
+    def test_unreferenced_nic_uses_commissioning_speed_and_visible_limit(self):
+        with self.window() as (root, ui):
+            self.pump(root, lambda: bool(ui.state) and not ui.pending)
+            state = self.service.snapshot()
+            state['motion_safety'] = dict(unreferenced_max_rpm=5, calibrated=False,
+                                          stop_deceleration_rpm_s=120)
+            ui.render(state)
+            self.assertEqual(float(ui.rpm.get()), 5)
+            self.assertEqual(float(ui.rpm_slider['to']), 5)
+            self.assertIn('最高 5 rpm', ui.limit_hint['text'])
+
     def test_opening_panel_automatically_refreshes_card_without_taking_control(self):
         with MotorClient(port=self.server.port) as owner:
             owner.hello()
@@ -151,6 +162,28 @@ class UITests(unittest.TestCase):
             ui.render(dict(phase='idle',devices=[dict(order=3,id=2,name='SV635N',
                            motor_code=14101,position=0,error_code=0x5443)],axes=[]))
             self.assertEqual(ui.tree.set('3','state'),'报警 0x5443')
+
+    def test_nonfault_warning_keeps_enabled_state_visible(self):
+        with self.window() as (root,ui):
+            ui.render(dict(phase='enabled',devices=[dict(order=1,id=0,name='SV635N',
+                           motor_code=14101,position=0,error_code=0x6320,fault=False)],
+                           axes=[dict(order=1,position=0,travel_degrees=0,enabled=True,
+                                      error_code=0x6320,fault=False)]))
+            self.assertEqual(ui.tree.set('1','state'),'使能 · 警告 0x6320')
+
+    def test_limit_hold_revision_clears_stale_local_target_without_changing_run(self):
+        with self.window() as (root,ui):
+            state=dict(phase='enabled',run_id='same-run',orders=[1],targets_deg=[60],
+                       target_reset_revision=0,devices=[dict(order=1,id=0,name='SV635N',
+                           motor_code=14101,position=0,error_code=0,fault=False)],
+                       axes=[dict(order=1,position=0,travel_degrees=0,enabled=True,error_code=0,fault=False)])
+            ui.client.run_id='same-run'
+            ui.render(state)
+            ui.latest_target=[60]
+            ui.render(dict(state,targets_deg=[-4],target_reset_revision=1))
+            self.assertEqual(ui.target_values,{1:-4})
+            self.assertIsNone(ui.latest_target)
+            self.assertEqual(ui.client.run_id,'same-run')
 
     def test_idle_control_keeps_continuous_enable_without_ui_pumping_or_targets(self):
         with self.window() as (root,ui):

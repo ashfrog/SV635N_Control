@@ -10,7 +10,7 @@ analysis = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['pysoem', 'core', 'app', 'cli', 'continuous_control', 'platform_control',
+    excludes=['app', 'cli', 'platform_control',
               'unittest', 'pytest', 'test_aps_backend', 'test_platform_control'],
     noarchive=False,
 )

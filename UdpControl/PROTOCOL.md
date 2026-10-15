@@ -16,6 +16,12 @@ UTF-8 JSON，一个数据报一个对象，请求最多 8192 字节。默认目�
 
 state 的 phase 是 `idle / scanning / enabling / enabled / stopping / fault`。enabled 是电机反馈，不是用户开启意图。所有状态响应还携带随机 server_id，后台进程每次启动时更换。state_serial 在该 server_id 内严格递增；客户端只采用当前服务器更大序号的 state，避免迟到反馈使状态倒退。重新 hello 时采用返回的 server_id，并重置旧反馈序号。后台主动以约 20 Hz 向控制客户端推送 `{"v":1,"type":"state","server_id":"...","state_serial":101,"state":{...}}`。
 
+网口直连的普通角度调试在运行中触发限位时，暂停本次多轴目标并保持 `phase=enabled`，`run_id` 不变；丢弃旧目标，将 `targets_deg` 改为触发时的实测偏移，递增 `target_reset_revision`。客户端收到同一运行中变化的该版本时，应清掉本地待发送目标和编辑中的旧值，并采用新的 `targets_deg`；继续心跳，可直接发送允许方向的新目标。限位松开或更新 profile 不会恢复旧运动；平台高度模式和固定初始位返回仍保持任一端点触发后全轴停止。
+
+SV635N 的 E950.0 / `0x5443` 表示正向超程警告，E952.0 / `0x5444` 表示反向超程警告；单端触发允许反向离开。驱动在 PP Halt 暂停时不会确认新目标，后台提交合法的新目标时在同一 PDO 中解除 Halt 并置位 new-setpoint，再执行正常确认握手，避免等待暂停中的确认而超时关闭使能。使能时的微小位置抖动不会触发运动限位暂停。
+
+网口后台增加 `motion_safety`，含 `unreferenced_max_rpm:5`、`calibrated`、`stop_deceleration_rpm_s`。未标定时 `enable` 显式传 `rpm:5` 或更低，超速使能和 profile 返回 `ok:false`，不改变当前使能与目标。标定后速度仍受机构标定上限约束；直接电机调试采用已标定包络还要求本次 `reference_confirmed:true`，禁止将保存文件默认为本次物理坐标已确认。`limits` 新增 `positive_latched` / `negative_latched`，端点状态可能为 `latched`：原始 `digital_inputs` 即使已清除，方向保护仍有效。必须按编码器位置反向退回触发边界内才解除方向锁存；记录的边界始终保留为软边界。断电、坐标重置、存储文件丢失或异常退出后均须重新核对位置和标定，不可据电平清除宣称已安全离开。
+
 ## 扫描与使能
 
 `adapters` 是只读的控制卡配置查询，与 `status` 一样无需获取控制权，也不占用 control_seq；配置 auth_key 时仍须携带正确密钥。只读刷新不会重新初始化控制卡、扫描电机、改变控制权或续期电机心跳。

@@ -13,7 +13,7 @@ def main():
     if sys.platform != 'win32':
         raise SystemExit('Build SVServer on Windows using Python x64.')
     if sys.maxsize <= 2**32:
-        raise SystemExit('Python x64 is required for APS168x64.dll.')
+        raise SystemExit('Python x64 is required for the portable backend.')
     work = ROOT / '.build' / 'svserver'
     work.mkdir(parents=True, exist_ok=True)
     icon = Image.new('RGBA', (256, 256), '#163a63')

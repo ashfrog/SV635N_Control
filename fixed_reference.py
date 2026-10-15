@@ -1,4 +1,4 @@
-"""Persist explicit, stationary three-axis centres in native APS coordinates."""
+"""Persist explicit, stationary three-axis centres in native controller coordinates."""
 import json
 import math
 from pathlib import Path
@@ -50,7 +50,7 @@ class FixedReference:
             if (d is None or not hasattr(d, 'units_per_rev') or not math.isfinite(d.position)
                     or not math.isfinite(d.units_per_rev) or d.units_per_rev <= 0
                     or d.motor_code != 14101):
-                raise ControlError('保存中位需要三台有效的 APS SV635N，链路位置为 1/2/3。')
+                raise ControlError('保存中位需要三台有效的 SV635N，链路位置为 1/2/3。')
             axes.append(dict(order=order, identity=list(d.identity), position=d.position))
         data = dict(version=1, id=uuid.uuid4().hex, adapter=self.adapter, backend=self.backend, axes=axes)
         temporary = self.path.with_name(self.path.name + '.' + uuid.uuid4().hex + '.tmp')
@@ -75,7 +75,10 @@ class FixedReference:
         for axis in self.data['axes'] if valid else []:
             d = known[axis['order']]
             position = feedback.get(d.order, {}).get('position', d.position)
-            heights.append((position-axis['position']) / d.units_per_rev * 5 * d.extension_sign
+            delta = position-axis['position']
+            if self.backend == 'ethercat':
+                delta = (delta + 2**31) % 2**32 - 2**31
+            heights.append(delta / d.units_per_rev * 5 * d.extension_sign
                            if d.extension_sign in (-1, 1) else None)
         return dict(available=self.path is not None, saved=self.data is not None, valid=valid,
                     id=self.data['id'] if self.data else None, error=error, heights_mm=heights)

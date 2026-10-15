@@ -9,6 +9,7 @@ from collections import deque
 
 DEFAULT_CONTINUOUS_RPM = 60
 DEFAULT_CONTINUOUS_ACCELERATION_RPM_S = 120
+DEFAULT_ADAPTER = r'\Device\NPF_{89B39964-A086-4A5D-BC55-D5804AE703C6}'
 MAX_MOVE_DEGREES = 3600
 MAX_MOVE_SECONDS = 120
 LOCAL_LOCK = threading.Lock()
@@ -145,6 +146,7 @@ class MotionQueue:
         self.commands = deque()
         self.planned = (0.0,) * len(self.orders)
         self.number = 0
+        self.hold_revision = 0
         self.ready = self.closed = False
 
     def profile(self):
@@ -216,4 +218,17 @@ class MotionQueue:
     def pending(self):
         with self.lock:
             return len(self.commands)
+
+    def hold_at(self, positions):
+        """Cancel queued motion and replace its displayed goal with measured positions."""
+        with self.lock:
+            self.commands.clear()
+            self.planned = tuple(positions)
+            self.number += 1
+            self.hold_revision += 1
+            self.changed.set()
+
+    def target_state(self):
+        with self.lock:
+            return self.planned, self.hold_revision
 

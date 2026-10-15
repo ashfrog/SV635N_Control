@@ -6,7 +6,7 @@
 
 ## 架构与坐标
 
-UE → UDP v1 → MotorService → PlatformGeometry / PlatformMotionQueue → APS SDK → PCIe-8332 → 三台 SV635N。
+UE → UDP v1 → MotorService → PlatformGeometry / PlatformMotionQueue → pysoem → 主板网口 → 三台 SV635N。可选 `backend: "aps"` 时改由 APS SDK / PCIe-8332 执行。
 
 高度直接换算为电机目标：`motor_deg_i = height_mm_i / mm_per_rev_i * 360 * extension_sign_i`。每帧必须提交全部三轴高度；所有撑杆行程及平台整体升降/倾斜范围通过后才更新目标，任一越界均拒绝整帧并停止当前平台运行。
 
@@ -103,9 +103,9 @@ PrivateDependencyModuleNames.AddRange(new string[] { "Sockets", "Networking", "J
 | `require_endpoint_sensors` | 默认要求每根撑杆配置有效的推出/缩回传感器 |
 | `allow_motor_debug` | 默认 false，防止单轴调试绕过平台约束；仅在机构脱开等维护条件下显式开放 |
 
-在 `aps.extension_limits/retraction_limits` 中配置实际 APS 轴号和 DI。平台模式任意端点触发都会停止全部撑杆；旧单轴调试的“限位后允许反向离开”不适用于承载平台。平台故障后的脱困应按实际机械维护流程进行。
+默认在 `nic.extension_limits/retraction_limits` 中按链路位置 1/2/3 配置 DI；可选 APS 后端在 `aps.extension_limits/retraction_limits` 中配置实际 APS 轴号和 DI。平台模式任意端点触发都会停止全部撑杆；旧单轴调试的“限位后允许反向离开”不适用于承载平台。平台故障后的脱困应按实际机械维护流程进行。
 
-固定初始位保存在后台配置文件旁的 `platform.reference.json`（模拟为 `platform.simulated.reference.json`，与实机隔离）。首次低速将三根撑杆调至实际中位，关闭使能并停稳，在高度页点“保存当前位置为固定初始位”。后台读取两次停稳位置，保存三轴 APS 原始位置及轴映射/方向/每转单位；保存不使能、不移动。再次保存会覆盖旧中位，改变物理中位后应重新测量可用行程并更新标定版本。
+固定初始位保存在后台配置文件旁的 `platform.reference.json`（模拟为 `platform.simulated.reference.json`，与实机隔离）。首次低速将三根撑杆调至实际中位，关闭使能并停稳，在高度页点“保存当前位置为固定初始位”。后台读取两次停稳位置，保存三轴后端原始位置及轴映射/方向/每转单位（切换后端后重新保存）；保存不使能、不移动。再次保存会覆盖旧中位，改变物理中位后应重新测量可用行程并更新标定版本。
 
 停止或服务重启后，点“低速返回固定初始位”，确认位置计数未重置且返回路径可通行，后台重新扫描、核对轴身份，以 5 rpm / 10 rpm/s 返回保存位置。整个返回期间可用 Esc 停止，返回后保持使能；观察三轴实际高度接近 0，关闭使能后才能再次确认中位并获取平台控制。返回流程禁止覆盖目标或速度，任何已配置端点触发停止全轴，不自动反向脱困。保存文件无效、轴映射/方向/电子齿轮或每转单位变化时拒绝返回。
 
@@ -121,7 +121,7 @@ PrivateDependencyModuleNames.AddRange(new string[] { "Sockets", "Networking", "J
 
 ## 控制能力与实机验证边界
 
-软件把三杆目标按同一进度插值，限制每根杆的目标变化速度；APS 原生轨迹限制加速度，单一硬件线程顺序提交三轴绝对目标。这不是控制卡硬件同步插补，不能承诺三轴同一 EtherCAT 周期开始或平台严格跟踪瞬时姿态。实际跟随误差、相位差和可接受帧率必须实机测量；需要严格同步时应使用经板卡能力核对的多轴插补/CSP，而非在 Python 中宣称同步。
+软件把三杆目标按同一进度插值，限制每根杆的目标变化速度；驱动器 PP 轨迹限制加速度，单一硬件线程经主板网口提交三轴绝对目标；可选 APS 后端使用控制卡轨迹。这不是控制卡硬件同步插补，不能承诺三轴同一 EtherCAT 周期开始或平台严格跟踪瞬时姿态。实际跟随误差、相位差和可接受帧率必须实机测量；需要严格同步时应使用经板卡能力核对的多轴插补/CSP，而非在 Python 中宣称同步。
 
 后台停止会减速、关闭使能并恢复参数。竖直承载机构必须具备经过验证的自锁/抱闸及独立硬件急停，避免关闭使能、断电或驱动故障时坠落；本项目没有抱闸专用时序，不能替代该硬件功能。
 

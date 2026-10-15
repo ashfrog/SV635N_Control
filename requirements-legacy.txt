@@ -1,3 +1,2 @@
-# Only for the old direct-NIC app.py/cli.py and their regression tests.
+# Compatibility entry point; direct-NIC dependencies are included by default.
 -r requirements.txt
-pysoem==1.1.13

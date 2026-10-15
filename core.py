@@ -19,9 +19,8 @@ from typing import Callable
 import pysoem
 from control_common import (ControlError, Stopped, Device, Move, adapter_lock,
                             DEFAULT_CONTINUOUS_RPM, DEFAULT_CONTINUOUS_ACCELERATION_RPM_S,
-                            MAX_MOVE_DEGREES, MAX_MOVE_SECONDS)
+                            MAX_MOVE_DEGREES, MAX_MOVE_SECONDS, DEFAULT_ADAPTER)
 
-DEFAULT_ADAPTER = r'\Device\NPF_{89B39964-A086-4A5D-BC55-D5804AE703C6}'
 RX_MAP = [0x60400010, 0x607A0020, 0x60B80010, 0x60FE0120]
 TX_MAP = [0x603F0010, 0x60410010, 0x60640020, 0x60770010,
           0x60F40020, 0x60B90010, 0x60BA0020, 0x60BC0020, 0x60FD0020]
@@ -164,6 +163,27 @@ class _Session:
         if self.stop.is_set():
             raise Stopped('已请求停止。')
 
+    def check_device_error(self, device):
+        if device.error_code or device.statusword & 8:
+            raise ControlError(f'ID {device.alias} 有报警 0x{device.error_code:04X}；请先处理报警，本程序不自动复位。')
+
+    def check_drive_feedback(self, axis):
+        error, sw, _ = axis['last']
+        label = f"ID {axis['device'].alias}"
+        if error or sw & 8:
+            raise ControlError(f'{label} 报警 0x{error:04X}。')
+        if axis['request'] and sw & 0x800:
+            raise ControlError(f'{label} 内部限制生效。')
+
+    def prepare_op(self):
+        """Backend hook after OP is established, before any axis is enabled."""
+
+    def additional_parameters(self, axis):
+        return []
+
+    def stop_deceleration(self, axis, acceleration):
+        return acceleration
+
     def setup(self):
         self.check_stop()
         self.emit('phase', text='核对设备及参数')
@@ -184,8 +204,7 @@ class _Session:
         for a in self.axes:
             d, s = a['device'], a['slave']
             self.check_stop()
-            if d.error_code or d.statusword & 8:
-                raise ControlError(f'ID {d.alias} 有报警 0x{d.error_code:04X}；请先处理报警，本程序不自动复位。')
+            self.check_device_error(d)
             if mapping(s, 0x1C12) != RX_MAP or mapping(s, 0x1C13) != TX_MAP:
                 raise ControlError(f'ID {d.alias} 的 PDO 配置不受支持。')
             if read(s, 0x2002, 1) != 9 or read(s, 0x200E, 0x20) != 1:
@@ -221,10 +240,11 @@ class _Session:
                 if max(velocity, accel) > 0xFFFFFFFF:
                     raise ControlError(f'ID {d.alias} 速度/加速度超出驱动器 32 位参数范围。')
                 a['changes'] = [(0x6081, 4, velocity, False), (0x6083, 4, accel, False),
-                                (0x6084, 4, accel, False), (0x6085, 4, accel, False),
-                                (0x6060, 1, 1, True)]
-                a['saved'] = [(idx, size, read(s, idx, signed=signed), signed)
-                              for idx, size, _, signed in a['changes']]
+                                (0x6084, 4, accel, False),
+                                (0x6085, 4, self.stop_deceleration(a, accel), False),
+                                (0x6060, 1, 1, True)] + self.additional_parameters(a)
+                a['saved'] = [(idx, size, read(s, idx, sub[0] if sub else 0, signed=signed), signed, *sub)
+                              for idx, size, _, signed, *sub in a['changes']]
                 a['policy'] = read(s, 0x200E, 2)
                 a['report'].update(original_parameters=a['saved'], original_save_policy=a['policy'],
                                    counts_per_rev=counts, delta_counts=a['delta'],
@@ -239,9 +259,9 @@ class _Session:
             self.check_stop()
             a['modified'] = True  # mark BEFORE write; handles uncertain write outcomes
             self.write(a, 0x200E, 2, 0, sub=2)
-            for idx, size, value, signed in a['changes']:
+            for idx, size, value, signed, *sub in a['changes']:
                 self.check_stop()
-                self.write(a, idx, size, value, signed=signed)
+                self.write(a, idx, size, value, signed=signed, sub=sub[0] if sub else 0)
             end = time.perf_counter() + 1
             while read(a['slave'], 0x6061, signed=True) != 1:
                 self.check_stop()
@@ -296,6 +316,7 @@ class _Session:
             details = [(a['device'].alias, a['slave'].state, a['slave'].al_status) for a in self.axes]
             raise ControlError(f'OP 验证失败（ID、状态、AL）：{details}')
         self.op_required = True
+        self.prepare_op()
         self.hold(.5)
         if any(a['last'][1] & 4 for a in self.axes):
             raise ControlError('准备期间检测到意外使能。')
@@ -366,10 +387,7 @@ class _Session:
             for a in self.axes:
                 error, sw, actual = a['last']
                 label = f"ID {a['device'].alias}"
-                if error or sw & 8:
-                    raise ControlError(f'{label} 报警 0x{error:04X}。')
-                if a['request'] and sw & 0x800:
-                    raise ControlError(f'{label} 内部限制生效。')
+                self.check_drive_feedback(a)
                 if not a['request'] and sw & 4:
                     raise ControlError(f'{label} 未选中却处于使能状态。')
                 if self.armed and a['request']:
@@ -384,6 +402,7 @@ class _Session:
             self.emit('status', wkc=wkc, expected_wkc=self.expected,
                       axes=[{'order': a['device'].order, 'position': a['last'][2],
                              'enabled': bool(a['last'][1] & 4), 'error_code': a['last'][0],
+                             'fault': bool(a['last'][1] & 8), 'internal_limit': bool(a['last'][1] & 0x800),
                              'travel_degrees': self.travel_degrees(a)
                              if 'origin' in a else None} for a in self.axes])
         self.deadline += 1_000_000
@@ -466,7 +485,8 @@ class _Session:
                 if self.armed:
                     self.command(2)
                     self.hold(max((a['report']['profile_velocity_counts_s'] /
-                                   a['report']['profile_acceleration_counts_s2'] for a in self.selected()), default=0) + .3,
+                                   self.stop_deceleration(a, a['report']['profile_acceleration_counts_s2'])
+                                   for a in self.selected()), default=0) + .3,
                               checked=False, cancellable=False)
                 for a in self.axes:
                     a['cw'] = 0
@@ -500,8 +520,8 @@ class _Session:
                     s.dc_sync(False, 1_000_000)
                 if a['modified']:
                     # Keep EEPROM disabled throughout restoration; policy is last.
-                    for idx, size, value, signed in reversed(a['saved']):
-                        self.write(a, idx, size, value, signed=signed)
+                    for idx, size, value, signed, *sub in reversed(a['saved']):
+                        self.write(a, idx, size, value, signed=signed, sub=sub[0] if sub else 0)
                     self.write(a, 0x200E, 2, a['policy'], sub=2)
                     a['report']['parameters_restored'] = True
             except Exception as exc:

@@ -1,4 +1,4 @@
-"""Verify the built EXE after relocation, without Python on PATH or real APS access."""
+"""Verify the built EXE after relocation, without Python on PATH or physical motor access."""
 import json
 import os
 from pathlib import Path
@@ -134,7 +134,7 @@ def main():
         port=free_port()
         missing_dll=workspace/'intentionally-missing-APS.dll'
         assert not missing_dll.exists()
-        config=dict(host='127.0.0.1',port=port,aps=dict(board_id=31,dll_path=str(missing_dll)))
+        config=dict(host='127.0.0.1',port=port,backend='aps',aps=dict(board_id=31,dll_path=str(missing_dll)))
         (deployed/'backend.config.json').write_text(json.dumps(config),encoding='utf-8')
         process=start([])
         try:
@@ -155,6 +155,29 @@ def main():
                 results['relocated_backend_tray_external_config_and_logs']='passed'
         finally:
             stop_process(process)  # No APS DLL was loaded and no hardware was initialized.
+
+        # Load the packaged SOEM backend using a deliberately nonexistent NIC.
+        # Opening this identifier must fail before any physical bus can be accessed.
+        port=free_port()
+        missing_adapter=r'\Device\NPF_{00000000-0000-0000-0000-000000000000}'
+        config=dict(host='127.0.0.1',port=port,backend='ethercat',adapter=missing_adapter)
+        (deployed/'backend.config.json').write_text(json.dumps(config),encoding='utf-8')
+        process=start(['--headless'])
+        try:
+            with MotorClient(port=port) as client:
+                def nic_fault_ready():
+                    try:
+                        client.hello(claim=False)
+                        return client.state.get('phase')=='fault'
+                    except UDPError:
+                        return False
+                wait_for(nic_fault_ready,process)
+                assert client.state['hardware_backend']=='ethercat'
+                assert client.state['adapter']==missing_adapter
+                assert not client.state['enabled'] and client.state['message']
+                results['relocated_direct_nic_backend_loads_without_hardware']='passed'
+        finally:
+            stop_process(process)
 
         # The compiled client connects read-only, then closes on backend shutdown.
         service=Mock()

@@ -71,11 +71,14 @@ class _ManualSession(_Session):
         for a, velocity, accel in values:
             for index, value in ((0x6081, velocity), (0x6083, accel), (0x6084, accel), (0x6085, accel)):
                 self.tick()  # Maintain cyclic PDO traffic between mailbox writes.
-                self.write(a, index, 4, value)
+                self.write(a, index, 4, self.stop_deceleration(a, value) if index == 0x6085 else value)
             a['report'].update(profile_velocity_counts_s=velocity, profile_acceleration_counts_s2=accel)
         self.profile_revision = revision
         self.emit('profile_applied', revision=revision, rpm=rpm, acceleration_rpm_s=acceleration)
         return True
+
+    def interrupt_motion(self, request=None):
+        return False
 
     def motion(self):
         self.check_stop()
@@ -106,6 +109,11 @@ class _ManualSession(_Session):
         expected = {}
         while True:
             self.tick()
+            if self.interrupt_motion():
+                if entry is not None and active is not None:
+                    entry['limit_blocked'] = True
+                active, entry, stage, expected = None, None, 'idle', {}
+                continue
             if stage == 'ack':
                 if all(a['last'][1] & 0x1000 for a in self.selected()):
                     self.command(0x2F)  # Absolute + change immediately; new-setpoint bit low.
@@ -121,6 +129,11 @@ class _ManualSession(_Session):
                 continue
             profile_changed = self.apply_profile()
             request = self.commands.pop()
+            if self.interrupt_motion(request):
+                if entry is not None and active is not None:
+                    entry['limit_blocked'] = True
+                active, entry, stage, expected = None, None, 'idle', {}
+                continue
             profile_retarget = (request is None and profile_changed and active is not None and
                                 not all(a['last'][1] & 0x400 and
                                         abs(a['unwrapped_counts'] - expected[a['device'].order]) <= a['tolerance']

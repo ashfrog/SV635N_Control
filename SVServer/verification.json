@@ -4,5 +4,6 @@
   "relocated_fixed_reference_low_speed_return": "passed",
   "relocated_fixed_reference_survives_process_restart": "passed",
   "relocated_backend_tray_external_config_and_logs": "passed",
+  "relocated_direct_nic_backend_loads_without_hardware": "passed",
   "frozen_client_read_only_connect_and_graceful_shutdown": "passed"
 }

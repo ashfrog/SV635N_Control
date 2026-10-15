@@ -14,6 +14,8 @@ import threading
 import time
 
 from aps_backend import validate_options
+from control_common import DEFAULT_ADAPTER
+from nic_config import validate_options as validate_nic_options
 from udp_server import UDPServer, bind_socket, encode, decode, PROTOCOL_VERSION, MAX_PACKET
 from motor_service import MotorService
 from platform_motion import validate_platform
@@ -23,7 +25,8 @@ BASE=application_dir(__file__)
 
 
 def load_config(path):
-    config=dict(host='127.0.0.1',port=5005,adapter=None,heartbeat_timeout_s=.5,auth_key='',aps={},platform={})
+    config=dict(host='127.0.0.1',port=5005,backend='ethercat',adapter=None,
+                heartbeat_timeout_s=.5,auth_key='',aps={},nic={},platform={})
     if path.exists():
         supplied=json.loads(path.read_text(encoding='utf-8-sig'))
         if not isinstance(supplied,dict) or set(supplied)-set(config):
@@ -32,12 +35,19 @@ def load_config(path):
     if not isinstance(config['host'],str) or type(config['port']) is not int or not 1<=config['port']<=65535:
         raise ValueError('host/port 配置无效。')
     config['aps'] = validate_options(config['aps'])
+    config['nic'] = validate_nic_options(config['nic'])
     config['platform'] = validate_platform(config['platform'])
-    configured_adapter = f"PCIe-8332:{config['aps']['board_id']}"
+    if config['backend'] not in ('ethercat', 'aps'):
+        raise ValueError('backend 必须为 ethercat（本机网口）或 aps（PCIe-8332）。')
+    configured_adapter = (DEFAULT_ADAPTER if config['backend'] == 'ethercat'
+                          else f"PCIe-8332:{config['aps']['board_id']}")
     if config['adapter'] is None:
         config['adapter'] = configured_adapter
-    if config['adapter'] != configured_adapter:
-        raise ValueError('adapter 请改为 ' + configured_adapter + '；PCIe-8332 后台不使用 NPF 网卡。')
+    if (not isinstance(config['adapter'], str) or not config['adapter'] or len(config['adapter']) > 512
+            or config['backend'] == 'ethercat' and not config['adapter'].startswith('\\Device\\NPF_')):
+        raise ValueError('adapter 必须填写本机 Npcap 网口名称（\\Device\\NPF_{GUID}）。')
+    if config['backend'] == 'aps' and config['adapter'] != configured_adapter:
+        raise ValueError('APS adapter 请改为 ' + configured_adapter)
     if not isinstance(config['auth_key'],str):
         raise ValueError('adapter/auth_key 配置无效。')
     return config
@@ -168,6 +178,7 @@ def main():
         logging.basicConfig(level=logging.INFO,handlers=[handler],format='%(asctime)s %(levelname)s %(name)s %(message)s')
         service=MotorService(config['adapter'],log_dir,config['heartbeat_timeout_s'],
                              aps_options=config['aps'],platform_options=config['platform'],
+                             backend=config['backend'],nic_options=config['nic'],
                              reference_path=args.config.resolve().parent/'platform.reference.json',
                              configuration_path=args.config.resolve())
         # Publish the startup scan before the first client can enable or rescan.
@@ -176,7 +187,7 @@ def main():
             server=UDPServer(service,config['host'],config['port'],config['auth_key']).start(reserved_socket)
             service.scan()
         if args.headless:
-            print(f"SV635N UDP 后台已启动：{config['host']}:{server.port}，正在自动连接并刷新控制卡 {config['adapter']}、扫描电机，电机未使能。",flush=True)
+            print(f"SV635N UDP 后台已启动：{config['host']}:{server.port}，正在连接 {config['adapter']} 并扫描电机，电机未使能。",flush=True)
             while not quit_event.wait(.2):
                 if server.closed.is_set():
                     break

@@ -38,6 +38,7 @@ class DebugWindow:
         self.target_edit_trace = None
         self.target_values = {}
         self.target_run = None
+        self.target_reset_revision = 0
         self.target_editor = None
         self.target_editor_order = None
         self.slider_orders = [None]
@@ -86,17 +87,17 @@ class DebugWindow:
         self.stop_button.pack(side='right')
         network = ttk.Frame(frame)
         network.pack(fill='x', pady=8)
-        ttk.Label(network, text='PCIe 控制卡').pack(side='left')
+        ttk.Label(network, text='电机网口 / 控制卡').pack(side='left')
         self.adapter_box = ttk.Combobox(network, textvariable=self.adapter, state='readonly', width=65)
         self.adapter_box.pack(side='left', padx=8, fill='x', expand=True)
-        self.adapters_button = ttk.Button(network, text='刷新控制卡', command=self.adapters)
+        self.adapters_button = ttk.Button(network, text='刷新网口', command=self.adapters)
         self.adapters_button.pack(side='left')
         self.scan_button = ttk.Button(network, text='重新扫描并恢复控制', command=self.claim)
         self.scan_button.pack(side='left', padx=(8, 0))
         self.tree = ttk.Treeview(frame, columns=('checked','order','id','name','position','travel','target','state',
                                                 'limit','inputs','retraction'), show='headings', height=4)
         for key, label, width in (('checked','选择',50),('order','链路位置',70),('id','ID',50),('name','电机 / 编号',190),
-                                  ('position','位置计数',95),('travel','偏移 °',80),('target','目标偏移 °',100),('state','反馈状态',80),
+                                  ('position','位置计数',95),('travel','偏移 °',80),('target','目标偏移 °',100),('state','反馈状态',150),
                                   ('limit','推出端限位',145),('inputs','DI1 / DI2 · 正/负限位',170),
                                   ('retraction','缩回端限位',145)):
             self.tree.heading(key, text=label)
@@ -135,7 +136,7 @@ class DebugWindow:
         self.sync_profile_sliders()
         self.profile_edit_traces = [(variable, variable.trace_add('write', self.schedule_profile_edit))
                                     for variable in (self.rpm, self.acceleration)]
-        ttk.Label(self.motor_controls,text='获取控制权后全部电机保持连续使能；限位仅停止运动。停止后可重新获取控制，关闭使能 / Esc 可取消。').pack(anchor='w')
+        ttk.Label(self.motor_controls,text='普通警告不影响控制；限位禁止朝触发方向运动。停止后可重新获取控制，关闭使能 / Esc 可取消。').pack(anchor='w')
         target_controls = ttk.Frame(self.motor_controls)
         target_controls.pack(fill='x',pady=(12,0))
         ttk.Label(target_controls,text='滑块控制').pack(side='left')
@@ -538,6 +539,10 @@ class DebugWindow:
         try:
             rpm, acceleration = ((60., 120.) if platform_mode else
                                  (float(self.rpm.get()),float(self.acceleration.get())))
+            safety = self.state.get('motion_safety', {})
+            if not platform_mode and safety and not safety.get('calibrated'):
+                rpm = min(rpm, safety['unreferenced_max_rpm'])
+                self.show_profile(dict(rpm=rpm, acceleration_rpm_s=acceleration))
             if not platform_mode and not all(math.isfinite(v) and v>0 for v in (rpm,acceleration)):
                 raise ValueError()
         except ValueError:
@@ -854,6 +859,12 @@ class DebugWindow:
         self.state=state
         platform = state.get('platform', {})
         platform_configured = platform.get('configured', False)
+        safety = state.get('motion_safety', {})
+        unreferenced = bool(safety and not safety.get('calibrated'))
+        self.rpm_slider.configure(to=safety['unreferenced_max_rpm'] if unreferenced else 3000)
+        if unreferenced and not getattr(self, 'commissioning_profile_shown', False):
+            self.commissioning_profile_shown = True
+            self.show_profile(dict(rpm=safety['unreferenced_max_rpm'], acceleration_rpm_s=120))
         actual_heights = dict(zip(platform.get('orders', []), platform.get('actual_lengths_mm', [])))
         target_heights = dict(zip(platform.get('orders', []), platform.get('lengths_mm', [])))
         for key, text in (('travel', '高度 mm' if platform_configured else '偏移 °'),
@@ -861,6 +872,7 @@ class DebugWindow:
             if self.tree.heading(key, 'text') != text:
                 self.tree.heading(key, text=text)
         self.configure_changed(self.limit_hint, text='平台模式：任一端点限位或持续跟随误差超限，停止全部三轴。' if platform_configured else
+                                  '未标定软限位：最高 5 rpm；限位方向锁存，只允许反向退出。' if unreferenced else
                                   '两端限位分别监视；触发后仅允许反向离开，两端同时触发时禁止运动。')
         adapter=state.get('adapter')
         if adapter and adapter not in self.adapter_names:
@@ -868,11 +880,14 @@ class DebugWindow:
             label=f'ADLINK {adapter}' if adapter.startswith('PCIe-8332:') else adapter
             self.adapter_box.configure(values=[label])
             self.adapter_box.current(0)
-        if state.get('run_id')!=self.target_run:
+        if (state.get('run_id')!=self.target_run
+                or state.get('target_reset_revision',0)!=self.target_reset_revision):
             self.target_run=state.get('run_id')
+            self.target_reset_revision=state.get('target_reset_revision',0)
             self.target_values=dict(zip(state.get('orders',[]),state.get('targets_deg',[])))
             self.latest_target=None
             self.finish_target_edit()
+            self.sync_slider()
         axes={a['order']:a for a in state.get('axes',[])}
         devices=state.get('devices',[])
         limits={a['order']:a for a in state.get('limits',[])}
@@ -888,6 +903,7 @@ class DebugWindow:
             def endpoint_text(state_key, input_key, allowed):
                 triggered_text = '● 已触发（平台全轴停止）' if platform_configured else f'● 已触发（只可{allowed}）'
                 text={'triggered':triggered_text,'clear':'○ 未触发',
+                      'latched':f'● 方向锁存（只可{allowed}）',
                       'unconfigured':'未配置传感器','unavailable':'反馈失效',
                       'no_sensor':'无传感器 / 未知'}.get(sensor.get(state_key),'等待反馈')
                 if sensor.get(input_key):
@@ -902,12 +918,20 @@ class DebugWindow:
                 return '?' if value is None else '1' if value else '0'
             inputs=f"{bit('di1')} / {bit('di2')} · {bit('positive_limit')} / {bit('negative_limit')}"
             error=a.get('error_code',d.get('error_code',0))
+            fault=a.get('fault',bool(error)) if a else d.get('fault',bool(error))
+            drive_state='使能' if a.get('enabled') else '未使能'
+            if error:
+                label='报警' if fault else '警告'
+                prefix='使能 · ' if a.get('enabled') and not fault else ''
+                drive_state=f'{prefix}{label} 0x{error:04X}'
+            elif fault:
+                drive_state='驱动故障'
             travel = actual_heights.get(order) if platform_configured else a.get('travel_degrees', 0.)
             target = target_heights.get(order, 0.) if platform_configured else self.target_values.get(order, 0.)
             values=('☑' if order in self.selected else '☐',order,d['id'],f"{d['name']} / {d['motor_code']}",
                     a.get('position',d['position']),f'{travel:.3f}' if travel is not None else '—',
                     f'{target:g}',
-                    f"报警 0x{error:04X}" if error else '使能' if a.get('enabled') else '未使能',
+                    drive_state,
                     limit_text,inputs,retraction_text)
             triggered=sensor.get('triggered') or sensor.get('retraction_triggered')
             known=sensor.get('state')=='clear' and sensor.get('retraction_state','no_sensor') in ('clear','no_sensor')
@@ -955,7 +979,9 @@ class DebugWindow:
         inputs = state.get('input_configuration', {})
         input_text = ' · '.join(label for key, label in
             (('limit_inputs_connected', '通用限位未接入（端点传感器按逐轴配置）'), ('emg_input_connected', '急停未接入（调试）'))
-            if inputs.get(key) is False)
+            if inputs.get(key) is False and not (key == 'emg_input_connected' and state.get('hardware_backend') == 'ethercat'))
+        if state.get('hardware_backend') == 'ethercat':
+            input_text = ' · '.join(filter(None, (input_text, '网口直连；急停由驱动器硬件回路处理')))
         self.status.set(f"{state.get('phase','?')} · {state.get('message','')} · " +
                         (input_text + ' · ' if input_text else '') +
                         ('调试面板持有控制权' if owner else '只读监视；外部程序可获取控制权'))

@@ -232,8 +232,8 @@ class BindingTests(unittest.TestCase):
     def test_backend_config(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / 'config.json'
-            self.assertEqual(load_config(path)['adapter'], 'PCIe-8332:0')
-            path.write_text(json.dumps(dict(aps=dict(board_id=2))), encoding='utf-8')
+            self.assertEqual(load_config(path)['backend'], 'ethercat')
+            path.write_text(json.dumps(dict(backend='aps',aps=dict(board_id=2))), encoding='utf-8')
             self.assertEqual(load_config(path)['adapter'], 'PCIe-8332:2')
             path.write_text(json.dumps(dict(adapter='NPF-old')), encoding='utf-8')
             with self.assertRaisesRegex(ValueError, 'NPF'):
@@ -1002,7 +1002,7 @@ class APSUDPTests(unittest.TestCase):
                 api = FakeAPS()
                 api.drive_errors[14] = 0x5443
                 api.drive_statuswords[14] = 0x48
-                service = MotorService()
+                service = MotorService(backend='aps')
                 service.hardware.api_factory = lambda: api
                 server = UDPServer(service,port=0).start()
                 try:
@@ -1032,6 +1032,7 @@ class APSUDPTests(unittest.TestCase):
                 api = FakeAPS()
                 api.fail_start = fail_scan
                 config = load_config(Path('missing-startup-test-config.json'))
+                config.update(backend='aps',adapter='PCIe-8332:0')
                 config['port'] = 0
                 observed = []
                 def inspect_startup(service, server, config, quit_event, config_path):
@@ -1200,7 +1201,7 @@ class APSUDPTests(unittest.TestCase):
 
     def test_real_udp_target_and_heartbeat_stop_with_single_hardware_thread(self):
         api = FakeAPS()
-        service = MotorService(heartbeat_timeout=.2)
+        service = MotorService(heartbeat_timeout=.2,backend='aps')
         service.hardware.api_factory = lambda: api
         server = UDPServer(service, port=0).start()
         client = MotorClient(port=server.port)
