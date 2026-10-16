@@ -4,6 +4,8 @@ UTF-8 JSON，一个数据报一个对象，请求最多 8192 字节。默认目�
 
 ## 获取控制权与只读状态
 
+网口通信故障结果可另含 `maximum_pdo_interval_ms`（真实 PDO 发送间隔最大值）、`dc_phase_error_ns` 和 `network_diagnostics`（逐轴 AL 状态与 ESC 错误寄存器）。这些字段用于诊断，不能把缺少完整反馈解释成已经关闭使能。实际 EE08 通信故障仍停机，不自动重新使能。
+
 ```json
 {"v":1,"id":"h1","type":"hello","claim":true}
 ```
@@ -16,11 +18,17 @@ UTF-8 JSON，一个数据报一个对象，请求最多 8192 字节。默认目�
 
 state 的 phase 是 `idle / scanning / enabling / enabled / stopping / fault`。enabled 是电机反馈，不是用户开启意图。所有状态响应还携带随机 server_id，后台进程每次启动时更换。state_serial 在该 server_id 内严格递增；客户端只采用当前服务器更大序号的 state，避免迟到反馈使状态倒退。重新 hello 时采用返回的 server_id，并重置旧反馈序号。后台主动以约 20 Hz 向控制客户端推送 `{"v":1,"type":"state","server_id":"...","state_serial":101,"state":{...}}`。
 
-网口直连的普通角度调试在运行中触发限位时，暂停本次多轴目标并保持 `phase=enabled`，`run_id` 不变；丢弃旧目标，将 `targets_deg` 改为触发时的实测偏移，递增 `target_reset_revision`。客户端收到同一运行中变化的该版本时，应清掉本地待发送目标和编辑中的旧值，并采用新的 `targets_deg`；继续心跳，可直接发送允许方向的新目标。限位松开或更新 profile 不会恢复旧运动；平台高度模式和固定初始位返回仍保持任一端点触发后全轴停止。
+启用后台 `auto_center.enabled` 时，每次进程启动的首次三轴 motor/platform enable 自动进入 `control_mode:"homing"`，寻找两端、回退复测并回中；此时 `phase:"enabled"` 仅表示标定已使能，客户端仍须持续 heartbeat，禁止提交 target/profile/pose/heights。`auto_center.ready:true` 且已返回请求的 motor/platform 模式、`phase:"enabled"` 后才可提交正常目标。成功后沿用原 run_id，恢复正常 profile，序号仍须递增。平台首次自动寻位不依赖旧中位文件；仍须提供当前有效 calibration_id。失败或取消关闭使能，不自动重试或恢复旧目标。状态 `auto_center` 含 enabled/ready/seek_rpm/result，result.phase 为寻位阶段，成功时 axes 含测得的 up_mm/down_mm、固定 origin 和软上下界。清空限位记录只编辑数据并使 ready=false，下次三轴 enable 重测；同一后台正常停用再使能不重复标定。只读启动不运动，旧坐标记录不用于本次首次标定。
+
+网口故障触发后先立即进入 `stopping`，message/stop_reason 保留最初通信或驱动故障，完成关闭使能核对和清理后进入 `fault`。清理期间发生的心跳中断不会覆盖起因；仍须查看 result.all_disabled，不能将 stopping 理解为已关闭使能。显示范围属于客户端本地视图，不发送任何 target/profile/disable 请求。
+
+result.all_disabled 是完整 PDO 关闭确认，all_disabled_sdo 是逐轴 SDO 确认，all_preop 是逐轴总线状态确认；PDO 不完整时不会伪造 all_disabled=true。停止期间可额外通过 SDO 写6040=0关闭仍使能轴，并逐台重试退回 PRE-OP，不复位或自动重启运行。network_diagnostics[].ports 为各 ESC 端口的 invalid_frames/physical_rx_errors/forwarded_rx_errors/lost_links，在重新扫描清空计数前保存。自动回中允许1 mm位置容差；重建零点时换算软上下界，实际端点不扩展。
+
+网口直连普通角度调试允许自由提交滑块目标，包括超过执行行程的目标。后台将实际 PP 终点约束在有效软边界内，先向边界运行，不因远目标立即停止或重置滑块。触发限位或制动边界后暂停本次运动，保持 `phase=enabled` 和 `run_id`，递增 `target_reset_revision`，但保留用户请求的 `targets_deg`。`target_hold_preserves_request:true` 表示该版本变化只通知停车，客户端不得据此改写滑块、清掉新拖动或覆盖编辑值。其它后端没有此标志时沿用旧版同步规则。限位变清、修改 profile 或继续拖动危险方向不会恢复旧运动，需提交反向目标退出；平台高度模式和固定初始位返回仍保持任一端点触发后全轴停止。
 
 SV635N 的 E950.0 / `0x5443` 表示正向超程警告，E952.0 / `0x5444` 表示反向超程警告；单端触发允许反向离开。驱动在 PP Halt 暂停时不会确认新目标，后台提交合法的新目标时在同一 PDO 中解除 Halt 并置位 new-setpoint，再执行正常确认握手，避免等待暂停中的确认而超时关闭使能。使能时的微小位置抖动不会触发运动限位暂停。
 
-网口后台增加 `motion_safety`，含 `unreferenced_max_rpm:5`、`calibrated`、`stop_deceleration_rpm_s`。未标定时 `enable` 显式传 `rpm:5` 或更低，超速使能和 profile 返回 `ok:false`，不改变当前使能与目标。标定后速度仍受机构标定上限约束；直接电机调试采用已标定包络还要求本次 `reference_confirmed:true`，禁止将保存文件默认为本次物理坐标已确认。`limits` 新增 `positive_latched` / `negative_latched`，端点状态可能为 `latched`：原始 `digital_inputs` 即使已清除，方向保护仍有效。必须按编码器位置反向退回触发边界内才解除方向锁存；记录的边界始终保留为软边界。断电、坐标重置、存储文件丢失或异常退出后均须重新核对位置和标定，不可据电平清除宣称已安全离开。
+网口后台增加 `motion_safety`，含 `max_rpm:3000`、兼容字段 `unreferenced_max_rpm:3000`、`calibrated`、`stop_deceleration_rpm_s`。角度调试的 enable/profile 接受正有限速度至 3000 rpm（含），超过 3000 返回 `ok:false`，不改变当前使能与目标；未标定时也不再限制为 5 rpm。三点高度模式仍受机构标定速度约束；直接电机调试采用已标定包络还要求本次 `reference_confirmed:true`，禁止将保存文件默认为本次物理坐标已确认。`limits` 新增 `positive_latched` / `negative_latched`，端点状态可能为 `latched`：原始 `digital_inputs` 即使已清除，方向保护仍有效。必须按编码器位置反向退回触发边界内才解除方向锁存；记录的边界始终保留为软边界。断电、坐标重置、存储文件丢失或异常退出后均须重新核对位置和标定，不可据电平清除宣称已安全离开。
 
 ## 扫描与使能
 
@@ -32,7 +40,7 @@ SV635N 的 E950.0 / `0x5443` 表示正向超程警告，E952.0 / `0x5444` 表示
 
 返回 `adapters:[{"name":"PCIe-8332:0","description":"..."}]`，表示后台配置的控制卡。后台启动时自动连接该卡并扫描电机，实际连接/扫描结果由 state.phase、state.message 和 state.devices 反馈。面板连接后台后自动刷新并选中该卡；旧客户端附带 session/control_seq 的 adapters 请求仍可读取列表。
 
-以下操作需要 session 和严格递增的 control_seq（0～2^53-1）：`scan / enable / release`。从 hello 返回的 control_seq+1 开始递增。重发同一个请求时保留 id、control_seq 和内容；失败后的新请求换 id 并增加 control_seq。
+以下操作需要 session 和严格递增的 control_seq（0～2^53-1）：`scan / enable / release / save_reference / return_reference / configure_platform / reset_limits / configure_soft_limits`。从 hello 返回的 control_seq+1 开始递增。重发同一个请求时保留 id、control_seq 和内容；失败后的新请求换 id 并增加 control_seq。
 
 ```json
 {"v":1,"id":"s1","type":"scan","session":"...","control_seq":1,"adapter":"PCIe-8332:0"}
@@ -45,6 +53,26 @@ adapter 可省略，使用后台当前控制卡配置；PCIe 后台仅接受匹�
 ```
 
 orders 须为不同的升序链路位置，不限定三轴。返回 `run_id`，立即开始心跳，直到 phase=enabled 再提交目标。使能不会自动移动，也不会自动执行上一运行目标。rpm 默认 60，acceleration_rpm_s 默认 120；两者为正的有限数值，使能就绪后可通过 profile 成对更新。
+
+## 网口限位记录与手动软限位
+
+`motion_safety.requires_soft_limits=true`：连续角度模式要求每轴完整有效的软上下界。缺少时 target 仍作为界面意图接受和显示，硬件保持 Halt，不执行运动；message 提示关闭使能并设置实测边界。3000 rpm enable/profile 上限不变。触限后的新反向目标等待驱动零速状态和至少 50 ms 编码器稳定窗口后执行，仅保留最新目标；危险方向更新取消等待目标，停止/重启丢弃它。停车中的重复目标不改变首次固定的 Halt 停车点，降 profile 不降低尚未完成的制动减速度。
+
+仅 EtherCAT 后台支持，仅 `idle/fault` 接受，并在硬件线程重新扫描、确认所有轴未使能后修改。ACK 表示开始，等待 `idle` 或读取 `fault` 原因；不使能、不移动、不清零编码器。SDK 提供 `reset_limits(orders)` 和 `configure_soft_limits(axes)`。
+
+```json
+{"v":1,"id":"limits1","type":"reset_limits","session":"...","control_seq":6,"orders":[1,2,3]}
+```
+
+仅清除所选轴旧的传感器位置记录，保留手动设置。仍在触发的实际输入会重新记录和阻止危险方向。
+
+```json
+{"v":1,"id":"limits2","type":"configure_soft_limits","session":"...","control_seq":7,"axes":[{"order":1,"enabled":true,"origin":1000,"lower_degrees":-1800,"upper_degrees":1800},{"order":2,"enabled":false}]}
+```
+
+启用时 `origin` 为扫描到的原生 32 位编码器固定零点，角度符号与该轴电机调试一致，必须有限且下限小于上限。不是每次 enable 重新捕获的原点，也不是毫米数值。仅更改列出的轴；每个列出轴的旧传感器位置记录被替换。整组验证通过后原子保存 `logs/nic-limit-memory.json`，首次编辑前备份 `.before-edit.bak`，重启保留。手动软限位与其它有效包络取交集，不能屏蔽物理输入。
+
+`state.limit_settings` 包含 `available` 和 `axes`；轴项为 `order/position/origin/current_degrees/enabled/lower_degrees/upper_degrees/learned_positive/learned_negative/identity_matches`。`position` 是当前原生计数，`current_degrees` 相对该固定零点；无手动设置时零点预填当前计数且上下限为 null。旧学习记录不匹配轴身份时 `identity_matches=false`，操作员须重新核对并编辑，不能静默当成有效边界。普通角度运行中新形成的冲突暂停并保持使能，提示停机后重置；启用前已有冲突仍拒绝启动。
 
 ## 三撑杆平台模式
 
@@ -162,7 +190,7 @@ disable 不要求 seq，匹配当前 run_id 就优先请求停止。ack 仅表�
 
 PCIe 后台新增 `state.limits`（扫描后持续更新，包括未使能/未选中轴）：每项包含 `order`、`input`（推出端 `di1`/`di2` 或 null）、`state`（`triggered`/`clear`/`unconfigured`/`unavailable`）、`valid`、`triggered`（布尔或 null）、`extension_sign`（APS 原生位置方向 ±1；未配置为 0）、`digital_inputs`（60FD 原始值）、`positive_limit`、`negative_limit`、`di1`、`di2`。双端配置另有 `retraction_input`、`retraction_sign`、`retraction_state`、`retraction_triggered`，含义与推出端相同；未配置缩回端时 `retraction_state:"no_sensor"`。`conflict:true` 表示两端同时触发。未知反馈不代表未触发；通信新鲜度仍由接收时间判断。`input_configuration` 包含逐轴 `extension_limits` / `retraction_limits`，配置见根目录后台说明。
 
-推出端限位触发时只允许缩回，缩回端触发时只允许推出。朝已知触发端运动的请求返回 `ok:false`；若请求入队后才触发，由硬件线程丢弃整条多轴目标并更新 `state.message`，先前 ACK 不代表已执行。旧目标不会在传感器解除后自动恢复；触发后需显式提交离开该端的反向目标，并继续心跳。运行中两端同时触发时停止冲突轴运动并保持 `enabled`，两方向目标均拒绝；信号恢复后必须提交新目标，不恢复旧运动。使能前已有双端冲突仍拒绝启动；驱动报警、急停、掉线等仍进入 `fault`。`clear` 不表示到达机械零点，传感器触发也不会自动执行回零。
+推出端限位触发时只允许缩回，缩回端触发时只允许推出。APS 后端朝已知触发端运动的请求返回 `ok:false`；网口普通角度调试接受该界面意图并保留请求值，由硬件线程约束执行终点或保持限位暂停，不限制滑块。若请求入队后才触发，硬件线程也会停止危险方向的运动并更新 `state.message`，ACK 不代表电机已执行或到位。旧目标不会在传感器解除后自动恢复；触发后需显式提交离开该端的反向目标，并继续心跳。运行中两端同时触发时停止冲突轴运动并保持 `enabled`，两方向目标均拒绝；信号恢复后必须提交新目标，不恢复旧运动。使能前已有双端冲突仍拒绝启动；驱动报警、急停、掉线等仍进入 `fault`。`clear` 不表示到达机械零点，传感器触发也不会自动执行回零。
 
 ## 后台退出通知
 

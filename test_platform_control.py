@@ -49,6 +49,12 @@ class FakeSlave:
     def dc_sync(self, *_):
         pass
 
+    def write_state(self):
+        pass
+
+    def state_check(self, *_):
+        return self.state
+
     def exchange(self):
         word, target, _, _ = struct.unpack('<HiHI', self.output)
         self.words.append(word)

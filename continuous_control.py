@@ -80,6 +80,12 @@ class _ManualSession(_Session):
     def interrupt_motion(self, request=None):
         return False
 
+    def prepare_request(self, request):
+        return request
+
+    def next_request(self):
+        return self.commands.pop()
+
     def motion(self):
         self.check_stop()
         for a in self.selected():
@@ -128,7 +134,9 @@ class _ManualSession(_Session):
             if stage != 'idle':
                 continue
             profile_changed = self.apply_profile()
-            request = self.commands.pop()
+            request = self.next_request()
+            if request is not None:
+                request = self.prepare_request(request)
             if self.interrupt_motion(request):
                 if entry is not None and active is not None:
                     entry['limit_blocked'] = True

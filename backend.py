@@ -16,6 +16,7 @@ import time
 from aps_backend import validate_options
 from control_common import DEFAULT_ADAPTER
 from nic_config import validate_options as validate_nic_options
+from auto_center import validate_auto_center
 from udp_server import UDPServer, bind_socket, encode, decode, PROTOCOL_VERSION, MAX_PACKET
 from motor_service import MotorService
 from platform_motion import validate_platform
@@ -26,7 +27,7 @@ BASE=application_dir(__file__)
 
 def load_config(path):
     config=dict(host='127.0.0.1',port=5005,backend='ethercat',adapter=None,
-                heartbeat_timeout_s=.5,auth_key='',aps={},nic={},platform={})
+                heartbeat_timeout_s=.5,auth_key='',aps={},nic={},platform={},auto_center=None)
     if path.exists():
         supplied=json.loads(path.read_text(encoding='utf-8-sig'))
         if not isinstance(supplied,dict) or set(supplied)-set(config):
@@ -39,6 +40,8 @@ def load_config(path):
     config['platform'] = validate_platform(config['platform'])
     if config['backend'] not in ('ethercat', 'aps'):
         raise ValueError('backend 必须为 ethercat（本机网口）或 aps（PCIe-8332）。')
+    config['auto_center'] = validate_auto_center(config['auto_center'] if config['auto_center'] is not None
+                                                else dict(enabled=config['backend']=='ethercat'))
     configured_adapter = (DEFAULT_ADAPTER if config['backend'] == 'ethercat'
                           else f"PCIe-8332:{config['aps']['board_id']}")
     if config['adapter'] is None:
@@ -151,6 +154,7 @@ def run_tray(service,server,config,quit_event,config_path=None):
 def main():
     parser=argparse.ArgumentParser(description='SV635N UDP 后台电机控制服务')
     parser.add_argument('--headless',action='store_true',help='不显示托盘，用于控制台/服务宿主')
+    parser.add_argument('--optimize-nic',action='store_true',help='管理员优化已停止的电机专用网口，不使能电机')
     parser.add_argument('--config',type=Path,default=BASE/'backend.config.json')
     args=parser.parse_args()
     log_dir=BASE/'logs'
@@ -161,6 +165,16 @@ def main():
     signal.signal(signal.SIGTERM,lambda *_:quit_event.set())
     try:
         config=load_config(args.config)
+        if args.optimize_nic:
+            from nic_setup import optimize_nic
+            backup = optimize_nic(config, log_dir)
+            message = f'电机专用网口优化完成，未使能、未发送运动指令。\n原设置已备份：{backup}\n现在可以启动后台并重新获取控制。'
+            if args.headless:
+                print(message, flush=True)
+            else:
+                import ctypes
+                ctypes.windll.user32.MessageBoxW(None, message, 'SV635N 网口优化完成', 0x40)
+            return 0
         try:
             reserved_socket=bind_socket(config['host'],config['port'])
         except OSError as exc:
@@ -179,6 +193,7 @@ def main():
         service=MotorService(config['adapter'],log_dir,config['heartbeat_timeout_s'],
                              aps_options=config['aps'],platform_options=config['platform'],
                              backend=config['backend'],nic_options=config['nic'],
+                             auto_center_options=config['auto_center'],
                              reference_path=args.config.resolve().parent/'platform.reference.json',
                              configuration_path=args.config.resolve())
         # Publish the startup scan before the first client can enable or rescan.

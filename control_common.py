@@ -219,11 +219,12 @@ class MotionQueue:
         with self.lock:
             return len(self.commands)
 
-    def hold_at(self, positions):
+    def hold_at(self, positions, *, keep_requested=False):
         """Cancel queued motion and replace its displayed goal with measured positions."""
         with self.lock:
             self.commands.clear()
-            self.planned = tuple(positions)
+            if not keep_requested:
+                self.planned = tuple(positions)
             self.number += 1
             self.hold_revision += 1
             self.changed.set()

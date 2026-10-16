@@ -92,7 +92,8 @@ class MotorClient:
                 packet['session'] = self.session
             if self.auth_key:
                 packet['auth_key'] = self.auth_key
-            if kind in ('scan', 'enable', 'release', 'save_reference', 'return_reference', 'configure_platform'):
+            if kind in ('scan', 'enable', 'release', 'save_reference', 'return_reference', 'configure_platform',
+                        'reset_limits', 'configure_soft_limits'):
                 self.control_sequence += 1
                 packet['control_seq'] = self.control_sequence
             event, replies = threading.Event(), []
@@ -153,6 +154,14 @@ class MotorClient:
         with self.control_lock:
             return self.request('configure_platform', travel_mm=travel_mm, reference_id=reference_id,
                                 calibration_confirmed=calibration_confirmed)
+
+    def reset_limits(self, orders):
+        with self.control_lock:
+            return self.request('reset_limits', orders=list(orders))
+
+    def configure_soft_limits(self, axes):
+        with self.control_lock:
+            return self.request('configure_soft_limits', axes=list(axes))
 
     def return_reference(self, reference_id, *, position_reference_confirmed=False):
         with self.control_lock:

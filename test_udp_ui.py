@@ -79,16 +79,109 @@ class UITests(unittest.TestCase):
             self.assertEqual(self.service.phase,'idle')
             self.assertEqual(len(self.masters),count)
 
-    def test_unreferenced_nic_uses_commissioning_speed_and_visible_limit(self):
+    def test_nic_allows_3000_maximum_and_preserves_selected_speed(self):
         with self.window() as (root, ui):
             self.pump(root, lambda: bool(ui.state) and not ui.pending)
             state = self.service.snapshot()
-            state['motion_safety'] = dict(unreferenced_max_rpm=5, calibrated=False,
+            state['motion_safety'] = dict(max_rpm=3000, unreferenced_max_rpm=3000, calibrated=False,
                                           stop_deceleration_rpm_s=120)
             ui.render(state)
-            self.assertEqual(float(ui.rpm.get()), 5)
-            self.assertEqual(float(ui.rpm_slider['to']), 5)
-            self.assertIn('最高 5 rpm', ui.limit_hint['text'])
+            self.assertEqual(float(ui.rpm.get()), 60)
+            self.assertEqual(float(ui.rpm_slider['to']), 3000)
+            self.assertIn('3000 rpm', ui.limit_hint['text'])
+            ui.rpm.set('1200')
+            ui.render(state)
+            self.assertEqual(float(ui.rpm.get()), 1200)
+
+    def test_homing_keeps_stop_available_and_normal_speed_selection_unchanged(self):
+        with self.window() as (root,ui):
+            self.pump(root,lambda:bool(ui.state) and not ui.pending)
+            ui.client.session='owned'
+            ui.client.run_id='homing-test'
+            ui.rpm.set('3000')
+            state=self.service.snapshot()
+            state.update(phase='enabled',control_mode='homing',run_id='homing-test',
+                orders=[1,2,3],auto_center=dict(enabled=True,ready=False),
+                profile=dict(rpm=6,acceleration_rpm_s=120,revision=0))
+            ui.state=state
+            ui.render(state)
+            self.assertEqual(str(ui.slider['state']),'disabled')
+            self.assertEqual(str(ui.stop_button['state']),'normal')
+            self.assertEqual(float(ui.rpm.get()),3000)
+            self.assertIn('回中进行中',ui.limit_hint['text'])
+            ui.queue_axis_target(1,300)
+            ui.flush_motion()
+            self.assertIsNone(ui.latest_target)
+            ui.client.run_id=None
+            ui.client.session=None
+
+    def test_platform_setup_prefills_measured_safe_travel_instead_of_old_nominal_range(self):
+        with self.window() as (root,ui):
+            self.pump(root,lambda:bool(ui.state) and not ui.pending)
+            state=self.service.snapshot()
+            state.update(phase='idle',fixed_reference=dict(valid=True,id='measured'),
+                auto_center=dict(enabled=True,ready=True,result=dict(axes=[
+                    dict(order=i+1,up_mm=31+i,down_mm=30+i) for i in range(3)])))
+            ui.state=state
+            ui.open_platform_setup()
+            dialog=next(w for w in root.winfo_children() if isinstance(w,tk.Toplevel))
+            frame=dialog.winfo_children()[0]
+            entries=[w for w in frame.winfo_children() if w.winfo_class()=='TEntry']
+            self.assertEqual([w.get() for w in entries],['31','30','32','31','33','32'])
+            dialog.grab_release()
+            dialog.destroy()
+
+    def test_limit_editor_available_from_fault_and_only_sends_explicit_settings(self):
+        with self.window() as (root, ui):
+            self.pump(root, lambda: bool(ui.state) and not ui.pending)
+            state = self.service.snapshot()
+            state.update(phase='fault', devices=[dict(order=1,id=0,name='SV635N',motor_code=14101,position=123)],
+                limit_settings=dict(available=True, axes=[dict(order=1,position=123,origin=100,
+                    current_degrees=2.5,enabled=True,lower_degrees=-90,upper_degrees=90)]))
+            ui.render(state)
+            ui.selected = {1}
+            self.assertIsNone(ui.client.session)
+            self.assertEqual(str(ui.reset_limits_button['state']), 'normal')
+            self.assertEqual(str(ui.soft_limits_button['state']), 'normal')
+            with patch.object(ui.client, 'hello') as claim, patch.object(ui.client, 'reset_limits') as reset, \
+                 patch.object(ui, 'task', side_effect=lambda fn, label:fn()):
+                ui.reset_limits_button.invoke()
+                claim.assert_called_once_with(claim=True)
+                reset.assert_called_once_with([1])
+            ui.open_soft_limits()
+            row = ui.soft_limit_rows[0]
+            self.assertEqual(row['origin'].get(), '100')
+            row['lower'].set('-180')
+            row['upper'].set('360')
+            with patch.object(ui.client, 'hello') as claim, patch.object(ui.client, 'configure_soft_limits') as save, \
+                 patch.object(ui, 'task', side_effect=lambda fn, label:fn()):
+                ui.save_soft_limits()
+                claim.assert_called_once_with(claim=True)
+                save.assert_called_once_with([dict(order=1,enabled=True,origin=100,lower_degrees=-180.,upper_degrees=360.)])
+            state['phase'] = 'enabled'
+            ui.render(state)
+            self.assertEqual(str(ui.reset_limits_button['state']), 'disabled')
+            self.assertEqual(str(ui.soft_limits_button['state']), 'disabled')
+            self.assertFalse(self.masters)
+
+    def test_limit_editor_keeps_dialog_open_for_invalid_bounds_without_request(self):
+        with self.window() as (root, ui):
+            self.pump(root, lambda: bool(ui.state) and not ui.pending)
+            state = self.service.snapshot()
+            state['limit_settings'] = dict(available=True, axes=[dict(order=1,position=123,origin=123,
+                current_degrees=0,enabled=False,lower_degrees=None,upper_degrees=None)])
+            ui.render(state)
+            ui.open_soft_limits()
+            row = ui.soft_limit_rows[0]
+            row['enabled'].set(True)
+            with patch('UdpControl.debug_ui.messagebox.showerror') as error, patch.object(ui, 'task') as task:
+                for low, high in (('0','0'), ('90','-90'), ('-90','nan'), ('-90','inf')):
+                    row['lower'].set(low)
+                    row['upper'].set(high)
+                    ui.save_soft_limits()
+                self.assertEqual(error.call_count, 4)
+                task.assert_not_called()
+            self.assertTrue(ui.soft_limits_dialog.winfo_exists())
 
     def test_opening_panel_automatically_refreshes_card_without_taking_control(self):
         with MotorClient(port=self.server.port) as owner:
@@ -184,6 +277,23 @@ class UITests(unittest.TestCase):
             self.assertEqual(ui.target_values,{1:-4})
             self.assertIsNone(ui.latest_target)
             self.assertEqual(ui.client.run_id,'same-run')
+
+    def test_nic_limit_stop_preserves_free_slider_and_newer_pending_target(self):
+        with self.window() as (root, ui):
+            state=dict(phase='enabled',run_id='same-run',orders=[1],targets_deg=[60],
+                       target_reset_revision=0,target_hold_preserves_request=True,
+                       devices=[dict(order=1,id=0,name='SV635N',motor_code=14101,
+                                     position=0,error_code=0,fault=False)],
+                       axes=[dict(order=1,position=0,travel_degrees=0,enabled=True,error_code=0,fault=False)])
+            ui.client.run_id, ui.client.session = 'same-run', 'test-session'
+            ui.render(state)
+            ui.queue_axis_target(None, 240)
+            ui.sync_slider()
+            ui.render(dict(state,target_reset_revision=1))
+            self.assertEqual(ui.target_values, {1:240})
+            self.assertEqual(ui.latest_target, [240])
+            self.assertEqual(float(ui.slider.get()), 240)
+            self.assertEqual(ui.tree.set('1', 'target'), '240')
 
     def test_idle_control_keeps_continuous_enable_without_ui_pumping_or_targets(self):
         with self.window() as (root,ui):
@@ -402,6 +512,31 @@ class UITests(unittest.TestCase):
             root.destroy()
             del ui, root
             gc.collect()
+
+    def test_display_range_change_preserves_targets_run_and_enable_after_idle_callbacks(self):
+        with self.window() as (root, ui):
+            ui.claim()
+            self.pump(root, lambda:ui.state.get('phase')=='enabled' and not ui.pending and not ui.auto_start)
+            ui.queue_target(25)
+            self.pump(root, lambda:self.service.commands.planned==(25,25,25,25))
+            run_id, number = self.service.run_id, self.service.commands.number
+            with patch.object(ui, 'queue_target', wraps=ui.queue_target) as target:
+                for center, span in ((0,3600),(10000,3600),(0,360),(0,3600)):
+                    ui.center.set(str(center))
+                    ui.span.set(str(span))
+                    ui.set_range()
+                    root.update_idletasks()
+                    root.update()
+                time.sleep(.6)  # Independent heartbeat must survive display edits.
+                root.update()
+                target.assert_not_called()
+            self.assertEqual(self.service.commands.number, number)
+            self.assertEqual(self.service.commands.planned, (25,25,25,25))
+            self.assertEqual(self.service.run_id, run_id)
+            self.assertEqual(self.service.phase, 'enabled')
+            self.assertAlmostEqual(ui.slider.get(), 25)
+            ui.queue_target(30)
+            self.pump(root, lambda:self.service.commands.planned==(30,30,30,30))
 
     def test_backend_tray_launches_separate_client_without_tk(self):
         quit_event=threading.Event()

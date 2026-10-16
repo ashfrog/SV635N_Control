@@ -68,6 +68,10 @@ class EtherCATController:
                 for a in pysoem.find_adapters()]
 
     def _discover(self, master):
+        # Idle scans/SDO polling must leave UDP and stop requests responsive,
+        # just like cyclic motion. PySOEM also applies this flag to its slaves.
+        if hasattr(master,'always_release_gil'):
+            master.always_release_gil=True
         count = master.config_init()
         if not 1 <= count <= 16:
             raise ControlError(f'扫描到 {count} 台设备；支持 1～16 台 SV635N。请检查网卡和 IN/OUT 接线。')
@@ -117,6 +121,8 @@ class EtherCATController:
 
 
 class _Session:
+    cycle_ns = 1_000_000
+
     def __init__(self, controller, moves, snapshot, stop, callback, dry_run):
         self.controller = controller
         self.master = controller.master_factory()
@@ -184,6 +190,24 @@ class _Session:
     def stop_deceleration(self, axis, acceleration):
         return acceleration
 
+    def cycle_adjustment_ns(self):
+        return 0
+
+    def retry_pause(self, started, cancellable):
+        pass
+
+    def poll_network_state(self, elapsed):
+        self.master.read_state()
+        self.last_state = elapsed
+        if any(a['slave'].state != 8 for a in self.axes):
+            raise ControlError('设备退出 OP，停止全部电机。')
+
+    def network_diagnostics(self):
+        pass
+
+    def capture_network_baseline(self):
+        """Optional diagnostics while all discovered axes are disabled in PRE-OP."""
+
     def setup(self):
         self.check_stop()
         self.emit('phase', text='核对设备及参数')
@@ -200,6 +224,7 @@ class _Session:
                       'report': {'order': d.order, 'id': d.alias, 'selected': d.order in self.requests}}
                      for d, s in zip(devices, self.master.slaves)]
         self.report['axes'] = [a['report'] for a in self.axes]
+        self.capture_network_baseline()
         # Read and journal ALL original parameters before the first write.
         for a in self.axes:
             d, s = a['device'], a['slave']
@@ -288,7 +313,7 @@ class _Session:
         if not self.master.config_dc():
             raise ControlError('未检测到 DC 时钟。')
         for a in self.axes:
-            a['slave'].dc_sync(True, 1_000_000)
+            a['slave'].dc_sync(True, self.cycle_ns)
             if a['slave']._fprd(0x0981, 1)[0] != 3:
                 raise ControlError('DC 同步激活核对失败。')
         self.master.state = pysoem.SAFEOP_STATE
@@ -350,6 +375,11 @@ class _Session:
                 self.check_stop()
             # Resend the same controlword/target: no new setpoint edge, and no
             # handshake or target updates until a complete feedback frame arrives.
+            sent_at = time.perf_counter()
+            if self.armed and hasattr(self, 'last_sent_at'):
+                self.report['maximum_pdo_interval_ms'] = max(self.report.get('maximum_pdo_interval_ms', 0),
+                                                            (sent_at-self.last_sent_at)*1000)
+            self.last_sent_at = sent_at
             self.master.send_processdata()
             if any(a['request'] and a['cw'] & 0x18 == 0x18 for a in self.axes):
                 self.report['motion_triggered'] = True
@@ -374,6 +404,7 @@ class _Session:
                 if failures >= PDO_MAX_FAILED_EXCHANGES or elapsed >= PDO_RECOVERY_SECONDS:
                     raise ControlError(f'通信 WKC={wkc}，期望 {self.expected}；'
                                        f'连续 {failures} 次异常，停止全部电机。')
+                self.retry_pause(sent_at, cancellable)
                 continue
             if failures:
                 if elapsed >= PDO_RECOVERY_SECONDS:
@@ -393,10 +424,7 @@ class _Session:
                 if self.armed and a['request']:
                     self.check_travel(a)
             if self.op_required and t - self.last_state >= .05:
-                self.master.read_state()
-                self.last_state = t
-                if any(a['slave'].state != 8 for a in self.axes):
-                    raise ControlError('设备退出 OP，停止全部电机。')
+                self.poll_network_state(t)
         if t - self.last_publish >= .1:
             self.last_publish = t
             self.emit('status', wkc=wkc, expected_wkc=self.expected,
@@ -405,7 +433,7 @@ class _Session:
                              'fault': bool(a['last'][1] & 8), 'internal_limit': bool(a['last'][1] & 0x800),
                              'travel_degrees': self.travel_degrees(a)
                              if 'origin' in a else None} for a in self.axes])
-        self.deadline += 1_000_000
+        self.deadline += self.cycle_ns + self.cycle_adjustment_ns()
         remaining = self.deadline - time.perf_counter_ns()
         if remaining > 250_000:
             time.sleep((remaining - 150_000) / 1_000_000_000)
@@ -474,6 +502,45 @@ class _Session:
         self.armed = False
         self.report['success'] = True
 
+    def verify_disabled_preop(self, axis):
+        """Stop each reachable drive even if another slave invalidates PDO WKC."""
+        slave=axis['slave']
+        axis['report'].update(sdo_disabled_verified=False,preop_verified=False)
+        try:
+            if read(slave,0x6041)&4:
+                # PDO quick-stop/disable was already attempted. This is only
+                # switch-off (never fault-reset or enable), via a separate path.
+                self.write(axis,0x6040,2,0)
+                time.sleep(.02)
+        except Exception:
+            pass  # Still request PRE-OP when mailbox access is unavailable.
+        try:
+            observed=slave.state_check(pysoem.PREOP_STATE,100_000)
+        except Exception:
+            observed=None
+        if observed==pysoem.PREOP_STATE:
+            axis['report']['preop_verified']=True
+        else:
+            for attempt in range(3):
+                try:
+                    if observed is not None and observed&pysoem.STATE_ERROR:
+                        slave.state=(observed&0xF)|pysoem.STATE_ACK
+                        slave.write_state()
+                    slave.state=pysoem.PREOP_STATE
+                    slave.write_state()
+                    observed=slave.state_check(pysoem.PREOP_STATE,500_000)
+                    if observed==pysoem.PREOP_STATE:
+                        axis['report']['preop_verified']=True
+                        break
+                except Exception:
+                    if attempt==2:
+                        raise
+        sw=read(slave,0x6041)
+        axis['report'].update(sdo_disabled_verified=not bool(sw&4),final_statusword=sw,
+            final_error_code=read(slave,0x603F),final_state=slave.state)
+        if sw&4 or not axis['report']['preop_verified']:
+            raise ControlError('未确认关闭使能并退回 PRE-OP，请检查驱动器。')
+
     def cleanup(self):
         if not self.opened:
             return
@@ -494,6 +561,8 @@ class _Session:
                 self.report['all_disabled'] = self.last_wkc == self.expected and all(not a['last'][1] & 4 for a in self.axes)
                 if not self.report['all_disabled']:
                     errors.append('未通过 PDO 确认全部关闭使能；请检查驱动器，必要时断电。')
+                if self.report.get('error') or self.report.get('backend') == 'ethercat':
+                    self.network_diagnostics()
             if self.mapped:
                 self.master.state = pysoem.SAFEOP_STATE
                 self.master.write_state()
@@ -512,12 +581,9 @@ class _Session:
         for a in self.axes:
             try:
                 s = a['slave']
-                sw = read(s, 0x6041)
-                a['report'].update(final_statusword=sw, final_error_code=read(s, 0x603F), final_state=s.state)
-                if sw & 4 or s.state != 2:
-                    raise ControlError('未确认关闭使能并退回 PRE-OP，请检查驱动器。')
+                self.verify_disabled_preop(a)
                 if self.mapped:
-                    s.dc_sync(False, 1_000_000)
+                    s.dc_sync(False, self.cycle_ns)
                 if a['modified']:
                     # Keep EEPROM disabled throughout restoration; policy is last.
                     for idx, size, value, signed, *sub in reversed(a['saved']):
@@ -527,6 +593,10 @@ class _Session:
             except Exception as exc:
                 a['report']['cleanup_error'] = str(exc)
                 errors.append(f"ID {a['device'].alias}：{exc}")
+        self.report['all_disabled_sdo']=bool(self.axes) and all(a['report'].get('sdo_disabled_verified',False) for a in self.axes)
+        self.report['all_preop']=bool(self.axes) and all(a['report'].get('preop_verified',False) for a in self.axes)
+        if self.report.get('all_disabled') and not self.report['all_disabled_sdo']:
+            self.report['all_disabled']=False
         try:
             self.master.close()
         finally:
@@ -547,6 +617,7 @@ class _Session:
             self.report.update(stopped=True, error=str(exc))
         except Exception as exc:
             self.report['error'] = f'{type(exc).__name__}: {exc}'
+            self.emit('fault', text=self.report['error'])
         finally:
             self.cleanup()
         if self.trace:

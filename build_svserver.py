@@ -26,6 +26,7 @@ def main():
         str(ROOT / 'packaging' / 'SVServer.spec')], cwd=ROOT, check=True)
     target = ROOT / 'SVServer'
     shutil.copytree(work / 'dist' / 'SVServer', target, dirs_exist_ok=True)
+    shutil.copy2(ROOT / 'packaging' / '优化电机网口（管理员）.cmd', target / '优化电机网口（管理员）.cmd')
     for name in ('backend.config.example.json', 'backend.platform.example.json'):
         shutil.copy2(ROOT / name, target / name)
     config = target / 'backend.config.json'

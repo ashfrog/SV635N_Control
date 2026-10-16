@@ -5,6 +5,16 @@
   "adapter": "\\Device\\NPF_{89B39964-A086-4A5D-BC55-D5804AE703C6}",
   "heartbeat_timeout_s": 0.5,
   "auth_key": "",
+  "auto_center": {
+    "enabled": true,
+    "coupled_axes": true,
+    "center_tolerance_mm": 1,
+    "mm_per_rev": 5,
+    "nominal_travel_mm": 100,
+    "seek_rpm": 60,
+    "latch_rpm": 6,
+    "center_rpm": 600
+  },
   "nic": {
     "limit_inputs_connected": true,
     "stop_deceleration_rpm_s": 120,

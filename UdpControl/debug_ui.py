@@ -107,8 +107,14 @@ class DebugWindow:
         self.tree.tag_configure('limit_unknown', background='#fff1cc', foreground='#634600')
         self.tree.bind('<Button-1>', self.toggle_motor)
         self.tree.bind('<Double-1>', self.edit_target)
-        self.limit_hint = ttk.Label(frame, text='两端限位分别监视；触发后仅允许反向离开，两端同时触发时禁止运动。')
-        self.limit_hint.pack(anchor='w', pady=(5,0))
+        limit_actions = ttk.Frame(frame)
+        limit_actions.pack(fill='x', pady=(5,0))
+        self.limit_hint = ttk.Label(limit_actions, text='两端限位分别监视；触发后仅允许反向离开，两端同时触发时禁止运动。')
+        self.limit_hint.pack(side='left')
+        self.soft_limits_button = ttk.Button(limit_actions, text='软限位设置', command=self.open_soft_limits)
+        self.soft_limits_button.pack(side='right')
+        self.reset_limits_button = ttk.Button(limit_actions, text='重置所选限位记录', command=self.reset_limits)
+        self.reset_limits_button.pack(side='right', padx=8)
         self.controls = ttk.Notebook(frame)
         self.controls.pack(fill='x', pady=6)
         self.motor_controls = ttk.Frame(self.controls, padding=10)
@@ -229,6 +235,10 @@ class DebugWindow:
         ttk.Label(frame,text='向上可用 mm').grid(row=1,column=1)
         ttk.Label(frame,text='向下可用 mm').grid(row=1,column=2)
         bounds = self.state.get('platform', {}).get('travel_bounds_mm', [])
+        automatic=self.state.get('auto_center',{})
+        measured={a['order']:a for a in (automatic.get('result') or {}).get('axes',[])}
+        if automatic.get('ready') and all(n in measured and 'up_mm' in measured[n] and 'down_mm' in measured[n] for n in (1,2,3)):
+            bounds=[[-measured[n]['down_mm'],measured[n]['up_mm']] for n in (1,2,3)]
         variables = []
         for i,label in enumerate(('1 号 · 前左','2 号 · 前右','3 号 · 后中')):
             ttk.Label(frame,text=label).grid(row=i+2,column=0,sticky='w',pady=5)
@@ -425,7 +435,7 @@ class DebugWindow:
                 self.stop_pending or self.start_cancel.is_set() or
                 self.state.get('phase')!='enabled' or self.client.run_id!=self.state.get('run_id')):
             return
-        if self.state.get('control_mode') == 'reference':
+        if self.state.get('control_mode') in ('reference','homing'):
             return
         if self.state.get('control_mode') == 'platform':
             if time.monotonic() - self.last_feedback > .35:
@@ -456,7 +466,9 @@ class DebugWindow:
         if (self.auto_start or self.enable_pending or self.stop_pending or
                 self.client.session and self.state.get('phase') not in ('idle','fault')):
             return
-        if self.state.get('platform', {}).get('configured') and not self.neutral_confirmed.get():
+        automatic=self.state.get('auto_center',{})
+        if (self.state.get('platform', {}).get('configured') and not self.neutral_confirmed.get()
+                and not (automatic.get('enabled') and not automatic.get('ready'))):
             self.status.set('请先确认三根撑杆均处于标定初始位，再获取三轴调试控制。')
             return
         self.start_cancel = threading.Event()
@@ -524,6 +536,91 @@ class DebugWindow:
             self.render(self.state)
         return 'break'
 
+    def limits_editable(self):
+        return (self.state.get('phase') in ('idle', 'fault')
+                and self.state.get('limit_settings', {}).get('available', False)
+                and not (self.pending or self.auto_start or self.enable_pending or self.stop_pending))
+
+    def reset_limits(self):
+        if not self.limits_editable():
+            return
+        orders = sorted(self.selected)
+        if not orders:
+            self.status.set('请先勾选需要重置限位记录的电机。')
+            return
+        def update():
+            self.client.hello(claim=True)
+            return self.client.reset_limits(orders)
+        self.task(update, 'reset_limits')
+
+    def open_soft_limits(self):
+        if not self.limits_editable():
+            return
+        previous = getattr(self, 'soft_limits_dialog', None)
+        if previous is not None and previous.winfo_exists():
+            previous.lift()
+            return
+        axes = self.state.get('limit_settings', {}).get('axes', [])
+        if not axes:
+            self.status.set('请先扫描电机，再设置软限位。')
+            return
+        dialog = self.soft_limits_dialog = tk.Toplevel(self.root)
+        dialog.title('每轴软限位设置')
+        dialog.transient(self.root)
+        frame = ttk.Frame(dialog, padding=16)
+        frame.pack(fill='both', expand=True)
+        ttk.Label(frame, text='单位：电机角度 °。上下限相对于本表固定零点，重新使能后仍使用该零点。').grid(
+            row=0, column=0, columnspan=7, sticky='w', pady=(0,5))
+        ttk.Label(frame, text='保存会清除这些轴旧的传感器位置记录；实际限位输入继续有效。仅停机且未使能时可修改。').grid(
+            row=1, column=0, columnspan=7, sticky='w', pady=(0,12))
+        for column, label in enumerate(('电机', '启用', '固定零点计数', '当前位置 °', '软下限 °', '软上限 °', '零点')):
+            ttk.Label(frame, text=label).grid(row=2, column=column, padx=6, sticky='w')
+        self.soft_limit_rows = []
+        for row, axis in enumerate(axes, 3):
+            values = dict(order=axis['order'], position=axis['position'],
+                          enabled=tk.BooleanVar(value=axis['enabled']),
+                          origin=tk.StringVar(value=str(axis['origin'])),
+                          current=tk.StringVar(value=f"{axis['current_degrees']:.3f}"),
+                          lower=tk.StringVar(value=str(axis['lower_degrees']) if axis['lower_degrees'] is not None else ''),
+                          upper=tk.StringVar(value=str(axis['upper_degrees']) if axis['upper_degrees'] is not None else ''))
+            self.soft_limit_rows.append(values)
+            ttk.Label(frame, text=str(axis['order'])).grid(row=row, column=0, padx=6, pady=6)
+            ttk.Checkbutton(frame, variable=values['enabled']).grid(row=row, column=1)
+            ttk.Entry(frame, textvariable=values['origin'], state='readonly', width=15).grid(row=row, column=2, padx=6)
+            ttk.Label(frame, textvariable=values['current'], width=12).grid(row=row, column=3, padx=6)
+            for column, name in ((4, 'lower'), (5, 'upper')):
+                ttk.Entry(frame, textvariable=values[name], width=13).grid(row=row, column=column, padx=6)
+            def rebase(values=values):
+                values['origin'].set(str(values['position']))
+                values['current'].set('0.000')
+            ttk.Button(frame, text='当前位置为 0', command=rebase).grid(row=row, column=6, padx=6)
+        ttk.Label(frame, text='例如：在中间位置取零点，实测下、上边界后填写 -1800 和 1800。请预留实际停车距离。').grid(
+            row=len(axes)+3, column=0, columnspan=7, sticky='w', pady=12)
+        ttk.Button(frame, text='保存软限位', command=self.save_soft_limits).grid(row=len(axes)+4, column=6, padx=6)
+
+    def save_soft_limits(self):
+        if not self.limits_editable():
+            self.status.set('请先关闭使能并等待停稳，再保存软限位。')
+            return
+        settings = []
+        try:
+            for row in self.soft_limit_rows:
+                axis = dict(order=row['order'], enabled=row['enabled'].get())
+                if axis['enabled']:
+                    low, high = float(row['lower'].get()), float(row['upper'].get())
+                    if not (math.isfinite(low) and math.isfinite(high) and low < high):
+                        raise ValueError()
+                    axis.update(origin=int(row['origin'].get()), lower_degrees=low, upper_degrees=high)
+                settings.append(axis)
+        except ValueError:
+            messagebox.showerror('软限位设置', '已启用轴必须填写有限数值，且软下限小于软上限。', parent=self.soft_limits_dialog)
+            return
+        def update():
+            self.client.hello(claim=True)
+            return self.client.configure_soft_limits(settings)
+        self.task(update, 'configure_soft_limits')
+        self.soft_limits_dialog.destroy()
+
     def enable(self, automatic=False):
         if self.pending:
             return
@@ -532,7 +629,9 @@ class DebugWindow:
             return
         platform = self.state.get('platform', {})
         platform_mode = platform.get('configured', False)
-        if platform_mode and not self.neutral_confirmed.get():
+        automatic=self.state.get('auto_center',{})
+        if (platform_mode and not self.neutral_confirmed.get()
+                and not (automatic.get('enabled') and not automatic.get('ready'))):
             self.auto_start = None
             self.status.set('平台未使能：请确认三根撑杆处于标定初始位。')
             return
@@ -639,7 +738,7 @@ class DebugWindow:
             self.status.set('速度和加减速度必须为大于 0 的有限数值。')
             return
         self.sync_profile_sliders()
-        if (self.state.get('control_mode') not in ('platform','reference') and not self.stop_pending and self.client.session and self.client.run_id and
+        if (self.state.get('control_mode') not in ('platform','reference','homing') and not self.stop_pending and self.client.session and self.client.run_id and
                 self.state.get('phase')=='enabled' and self.client.run_id==self.state.get('run_id')):
             self.latest_profile=(self.client.run_id,rpm,acceleration)
 
@@ -652,7 +751,17 @@ class DebugWindow:
                 raise ValueError()
             self.syncing=True
             try:
-                self.slider.configure(from_=low,to=high)
+                # Tk can defer a Scale command until its idle redraw. Disconnect
+                # the callback during range changes, including that redraw, so
+                # a display-only edit never becomes a motor target.
+                command = self.slider.cget('command')
+                self.slider.configure(command='')
+                try:
+                    self.slider.configure(from_=low,to=high)
+                    self.sync_slider()
+                    self.slider.update_idletasks()
+                finally:
+                    self.slider.configure(command=command)
             finally:
                 self.syncing=False
         except ValueError:
@@ -670,7 +779,7 @@ class DebugWindow:
 
     def queue_axis_target(self,order,value):
         orders=self.state.get('orders',[])
-        if (self.state.get('control_mode') in ('platform','reference') or self.state.get('phase')!='enabled' or not self.client.session
+        if (self.state.get('control_mode') in ('platform','reference','homing') or self.state.get('phase')!='enabled' or not self.client.session
                 or not self.client.run_id or self.client.run_id!=self.state.get('run_id')
                 or order is not None and order not in orders):
             return
@@ -697,18 +806,23 @@ class DebugWindow:
         order=self.slider_orders[index] if 0 <= index < len(self.slider_orders) else None
         values=self.current_targets()
         value=values.get(order,next(iter(values.values()),0.))
+        previous_syncing = self.syncing
+        command = self.slider.cget('command')
         self.syncing=True
         try:
+            self.slider.configure(command='')
             low,high=float(self.slider.cget('from')),float(self.slider.cget('to'))
             self.slider.set(max(low,min(high,value)))
+            self.slider.update_idletasks()
         finally:
-            self.syncing=False
+            self.slider.configure(command=command)
+            self.syncing=previous_syncing
         label='共同目标偏移' if order is None else f'电机 {order} 目标偏移'
         self.position.set(f'{label} {value:.2f}°' if order is not None or len(set(values.values()))<=1
                           else '各轴目标不同；选择单轴调节或拖动统一目标')
 
     def edit_target(self,event):
-        if self.state.get('control_mode') == 'reference':
+        if self.state.get('control_mode') in ('reference','homing'):
             return 'break'
         if self.state.get('platform', {}).get('configured'):
             self.controls.select(self.height_controls)
@@ -862,17 +976,17 @@ class DebugWindow:
         safety = state.get('motion_safety', {})
         unreferenced = bool(safety and not safety.get('calibrated'))
         self.rpm_slider.configure(to=safety['unreferenced_max_rpm'] if unreferenced else 3000)
-        if unreferenced and not getattr(self, 'commissioning_profile_shown', False):
-            self.commissioning_profile_shown = True
-            self.show_profile(dict(rpm=safety['unreferenced_max_rpm'], acceleration_rpm_s=120))
         actual_heights = dict(zip(platform.get('orders', []), platform.get('actual_lengths_mm', [])))
         target_heights = dict(zip(platform.get('orders', []), platform.get('lengths_mm', [])))
         for key, text in (('travel', '高度 mm' if platform_configured else '偏移 °'),
                           ('target', '目标高度 mm' if platform_configured else '目标偏移 °')):
             if self.tree.heading(key, 'text') != text:
                 self.tree.heading(key, text=text)
-        self.configure_changed(self.limit_hint, text='平台模式：任一端点限位或持续跟随误差超限，停止全部三轴。' if platform_configured else
-                                  '未标定软限位：最高 5 rpm；限位方向锁存，只允许反向退出。' if unreferenced else
+        auto_center=state.get('auto_center',{})
+        self.configure_changed(self.limit_hint, text='自动寻两端并回中进行中；滑块暂不可用，关闭使能 / Esc 可停止。' if state.get('control_mode')=='homing' and state.get('phase') in ('enabling','enabled') else
+                                  '本次启动首次获取三轴控制时，自动低速寻找两端并回中；重置按钮仅清空记录。' if auto_center.get('enabled') and not auto_center.get('ready') else
+                                  '平台模式：任一端点限位或持续跟随误差超限，停止全部三轴。' if platform_configured else
+                                  '角度上限 3000 rpm；运动前设置软上下限，触限停稳后才可反向退出。' if unreferenced else
                                   '两端限位分别监视；触发后仅允许反向离开，两端同时触发时禁止运动。')
         adapter=state.get('adapter')
         if adapter and adapter not in self.adapter_names:
@@ -880,14 +994,16 @@ class DebugWindow:
             label=f'ADLINK {adapter}' if adapter.startswith('PCIe-8332:') else adapter
             self.adapter_box.configure(values=[label])
             self.adapter_box.current(0)
-        if (state.get('run_id')!=self.target_run
-                or state.get('target_reset_revision',0)!=self.target_reset_revision):
+        if (state.get('run_id')!=self.target_run or
+                state.get('target_reset_revision',0)!=self.target_reset_revision
+                and not state.get('target_hold_preserves_request')):
             self.target_run=state.get('run_id')
             self.target_reset_revision=state.get('target_reset_revision',0)
             self.target_values=dict(zip(state.get('orders',[]),state.get('targets_deg',[])))
             self.latest_target=None
             self.finish_target_edit()
             self.sync_slider()
+        self.target_reset_revision=state.get('target_reset_revision',0)
         axes={a['order']:a for a in state.get('axes',[])}
         devices=state.get('devices',[])
         limits={a['order']:a for a in state.get('limits',[])}
@@ -944,6 +1060,8 @@ class DebugWindow:
                 self.tree.insert('','end',iid=str(order),values=values,tags=tags)
         owner=bool(self.client.session)
         idle=not self.auto_start and not self.enable_pending and state.get('phase') not in ('scanning','enabling','enabled','stopping')
+        for button in (self.reset_limits_button, self.soft_limits_button):
+            button.configure(state='normal' if self.limits_editable() else 'disabled')
         self.claim_button.configure(text='重新获取调试控制' if owner else '获取调试控制权',
                                    state='normal' if idle and not self.stop_pending else 'disabled')
         for button in (self.release_button,self.scan_button):
@@ -952,7 +1070,8 @@ class DebugWindow:
         self.adapter_box.configure(state='readonly' if owner and idle else 'disabled')
         self.stop_button.configure(state='normal' if self.auto_start or self.enable_pending or
                                    self.client.run_id and state.get('phase') in ('enabling','enabled') else 'disabled')
-        controllable=owner and self.client.run_id==state.get('run_id') and state.get('phase')=='enabled'
+        controllable=(owner and self.client.run_id==state.get('run_id') and state.get('phase')=='enabled'
+                      and state.get('control_mode')!='homing')
         self.render_height_controls(state, idle, controllable)
         motor_controllable = controllable and state.get('control_mode') not in ('platform','reference')
         for widget in (self.rpm_entry,self.acceleration_entry,self.rpm_slider,self.acceleration_slider):
@@ -1095,6 +1214,8 @@ class DebugWindow:
             variable.trace_remove('write', trace)
         self.height_edit_traces.clear()
         self.height_vars.clear()
+        if hasattr(self, 'soft_limit_rows'):
+            self.soft_limit_rows.clear()
         self.neutral_confirmed = None
         # Tk variables must be finalized on this UI thread. Destroyed windows
         # may otherwise be collected by a network worker during a later run.

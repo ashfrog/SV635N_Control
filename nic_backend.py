@@ -1,5 +1,5 @@
 """SV635N backend using the motherboard NIC, Npcap and the existing SOEM PP loop."""
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from collections import deque
 from functools import cached_property
 import math
@@ -11,7 +11,8 @@ from control_common import ControlError, Device, DEFAULT_ADAPTER, adapter_lock
 from core import EtherCATController, displacement, read
 from continuous_control import _ManualSession
 from nic_config import validate_options
-from nic_safety import (COMMISSIONING_MAX_RPM, LimitMemory, envelope_bounds, stopping_distance)
+from nic_safety import (MAX_MOTOR_RPM, LimitMemory, envelope_bounds, manual_bounds, stopping_distance)
+from ethercat_timing import DCPhaseClock, cyclic_worker
 
 
 @dataclass(frozen=True)
@@ -75,14 +76,30 @@ class NICController(EtherCATController):
         if type(rpm) not in (int, float) or not math.isfinite(rpm) or rpm <= 0:
             raise ControlError('速度必须为正有限数值。')
         envelope = getattr(commands, 'travel_envelope', None)
-        if envelope is None and rpm > COMMISSIONING_MAX_RPM:
-            raise ControlError('未标定固定中位和实测软限位，调试速度最高 5 rpm；请先完成行程标定。')
+        if rpm > MAX_MOTOR_RPM:
+            raise ControlError(f'电机角度调试速度最高 {MAX_MOTOR_RPM:g} rpm。')
         if envelope is not None:
             maximum = envelope.get('max_speed_rpm')
             if type(maximum) not in (int, float) or not math.isfinite(maximum) or maximum <= 0:
                 raise ControlError('软限位缺少已标定的运行速度上限。')
             if rpm > maximum:
                 raise ControlError(f'速度超过已标定机构上限 {maximum:g} rpm。')
+
+    def limit_settings(self, devices, feedback):
+        axes = []
+        for device in devices:
+            entry = self.limit_memory.axes.get(f'{self.adapter}:{device.order}', {})
+            identity_matches = not entry or entry.get('identity') == list(device.identity)
+            manual = entry.get('manual', {}) if identity_matches else {}
+            current = feedback.get(device.order, {}).get('position', device.position)
+            origin = manual.get('origin', current)
+            factor = 1 if device.positive_direction else -1
+            axes.append(dict(order=device.order, position=current, origin=origin,
+                current_degrees=displacement(current, origin)*360/device.units_per_rev*factor,
+                enabled=manual.get('enabled', False), lower_degrees=manual.get('lower_degrees'),
+                upper_degrees=manual.get('upper_degrees'), learned_positive=entry.get('positive'),
+                learned_negative=entry.get('negative'), identity_matches=identity_matches))
+        return dict(available=True, axes=axes)
 
     def _discover(self, master):
         devices = []
@@ -120,13 +137,17 @@ class NICController(EtherCATController):
                     raise ControlError('链路设备已变化，请重新扫描。')
                 result = {}
                 for d in devices:
+                    position = None
                     try:
                         slave = master.slaves[d.slave_id]
                         sensor = input_state(d, read(slave, 0x60FD), error_code=read(slave, 0x603F))
+                        position = read(slave, 0x6064, signed=True)
                         result[d.order] = self.limit_memory.protect(
-                            self.adapter, d, read(slave, 0x6064, signed=True), sensor)
+                            self.adapter, d, position, sensor)
                     except Exception as exc:
                         result[d.order] = input_state(d, error=exc)
+                    if position is not None:
+                        result[d.order]['position'] = position
                 return result
             finally:
                 if opened:
@@ -145,20 +166,109 @@ class NICController(EtherCATController):
             commands.close()
             self.limit_memory.save()
 
+    def run_auto_center(self,devices,commands,options,stop,callback):
+        from auto_center_session import AutoCenterSession
+        try:
+            with adapter_lock(self.adapter):
+                return AutoCenterSession(self,devices,commands,stop,callback,options=options).run()
+        finally:
+            commands.close()
+
     def close(self):
         # Each scan/input read/session owns and closes its own SOEM master.
         return []
 
 
 class _NICSession(_ManualSession):
+    # SV635N manual section 12.3: 125 us and its integer multiples.
+    # PP trajectory runs in the drive; 250 Hz feedback/handshakes leave the
+    # Windows worker more scheduling headroom than the former 1 kHz loop.
+    # The independent 10 ms PDO recovery budget and stop guards are unchanged.
+    cycle_ns = 4_000_000
+
     def __init__(self, *args):
         super().__init__(*args)
         self.limits = {}
         self.cleaning = False
         self.recovering_communication = True
+        self.communication_reset_orders = set()
         self.limit_pending = set()
         self.limit_halted = False
-        self.report.update(backend='ethercat', control_source='udp')
+        self.deferred_reverse = None
+        self.dc_clock = DCPhaseClock(self.cycle_ns)
+        self.network_baseline = {}
+        self.report.update(backend='ethercat', control_source='udp', bus_cycle_ms=self.cycle_ns/1_000_000)
+
+    def run(self):
+        with cyclic_worker(self.master, self.report):
+            return super().run()
+
+    def cycle_adjustment_ns(self):
+        adjustment = self.dc_clock.correction(getattr(self.master, 'dc_time', 0))
+        self.report['dc_phase_error_ns'] = self.dc_clock.phase_error
+        return adjustment
+
+    def retry_pause(self, started, cancellable):
+        # Retries retain the setpoint edge, at most once per 1 ms, within the
+        # independent 10 ms recovery budget even with a slower normal cycle.
+        remaining = started+.001-time.perf_counter()
+        if remaining > 0:
+            time.sleep(remaining)
+        if cancellable:
+            self.check_stop()
+
+    def poll_network_state(self, elapsed):
+        # Healthy PDO WKC + per-axis CiA402 enable/fault feedback are checked on
+        # every cycle. A blocking read_state transaction must not interrupt DC
+        # traffic every 50 ms. OP is explicitly verified during setup; failure
+        # diagnostics read AL state only after the stopping PDOs have been sent.
+        self.last_state = elapsed
+
+    def capture_network_baseline(self):
+        for axis in self.axes:
+            try:
+                raw = bytes(axis['slave']._fprd(0x0300,20))
+                if len(raw) != 20:
+                    raise ValueError('ESC counter snapshot length mismatch')
+                self.network_baseline[axis['device'].order] = raw
+                axis['report']['esc_error_baseline_0300_0313'] = raw.hex()
+            except Exception as exc:
+                axis['report']['network_baseline_error'] = str(exc)
+
+    def network_diagnostics(self):
+        details = []
+        try:
+            self.master.read_state()
+            for axis in self.axes:
+                slave = axis['slave']
+                item = dict(order=axis['device'].order, id=axis['device'].alias,
+                            state=slave.state, al_status=slave.al_status)
+                try:
+                    raw=slave._fprd(0x0300,20)
+                    item['esc_error_registers_0300_0313'] = raw.hex()
+                    baseline = self.network_baseline.get(axis['device'].order)
+                    item['ports'] = []
+                    for p in range(4):
+                        port = dict(port=p)
+                        offsets = dict(invalid_frames=p*2,physical_rx_errors=p*2+1,
+                                       forwarded_rx_errors=8+p,lost_links=16+p)
+                        for name,offset in offsets.items():
+                            port[name] = raw[offset]
+                            # Saturated/reset/missing baselines cannot prove a
+                            # zero increase; preserve that uncertainty as null.
+                            port['added_'+name] = (raw[offset]-baseline[offset] if baseline is not None
+                                and baseline[offset] <= raw[offset] < 255 else None)
+                        port['counter_reset_detected'] = bool(baseline is not None and
+                            any(raw[o] < baseline[o] for o in offsets.values()))
+                        port['counter_saturated'] = any(raw[o] == 255 or baseline is not None and
+                            baseline[o] == 255 for o in offsets.values())
+                        item['ports'].append(port)
+                except Exception as exc:
+                    item['counter_read_error'] = str(exc)
+                details.append(item)
+        except Exception as exc:
+            self.report['network_diagnostic_error'] = str(exc)
+        self.report['network_diagnostics'] = details
 
     def check_device_error(self, device):
         # SV635N 603F also contains No.3 warnings. CiA402 bit3 distinguishes a fault.
@@ -172,8 +282,9 @@ class _NICSession(_ManualSession):
         if code == 0x0900:
             raise ControlError(f"电机 {axis['device'].order} DI 紧急刹车有效，已停止全部电机。")
         if sw & 8:
-            if self.recovering_communication and not self.armed and code == 0x0E08:
-                return
+            if self.recovering_communication and not self.armed:
+                if code == 0x0E08 or code == 0 and axis['device'].order in self.communication_reset_orders:
+                    return
             raise ControlError(f"电机 {axis['device'].order} 驱动故障 0x{code:04X}，已停止；重新获取控制前核对故障原因。")
         # Bit11 reports internal limiting (speed/torque/position); directional
         # travel limits are checked separately against 60FD and 5443/5444 below.
@@ -186,6 +297,7 @@ class _NICSession(_ManualSession):
             raise ControlError('通信恢复前检测到轴已使能，禁止复位接管。')
         affected = [a for a in self.axes if a['last'][1] & 8 and a['last'][0] == 0x0E08]
         if affected:
+            self.communication_reset_orders = {a['device'].order for a in affected}
             self.emit('phase', text='总线已恢复 OP，正在未使能状态复位残留通信故障 0x0E08')
             self.report['communication_reset'] = dict(orders=[a['device'].order for a in affected],
                                                        attempted=True, cleared=False)
@@ -206,6 +318,7 @@ class _NICSession(_ManualSession):
                 self.tick()
             self.report['communication_reset']['cleared'] = True
         self.recovering_communication = False
+        self.communication_reset_orders.clear()
 
     def setup(self):
         self.controller.validate_motion_profile(self.commands)
@@ -217,19 +330,31 @@ class _NICSession(_ManualSession):
         if reference:
             for axis in reference['axes']:
                 d = next(a['device'] for a in self.axes if a['device'].order == axis['order'])
+                tolerance=getattr(self.commands,'neutral_tolerance_degrees',{}).get(d.order,.2)
                 if (list(d.identity) != axis['identity'] or
-                        abs(displacement(d.position, axis['position'])) > max(2., d.units_per_rev*.2/360)):
+                        abs(displacement(d.position, axis['position'])) > max(2., d.units_per_rev*tolerance/360)):
                     raise ControlError('三轴尚未回到保存的固定初始位，请先返回固定初始位。')
 
     def additional_parameters(self, axis):
-        # Both the drive-local P/N-OT reaction and PP Halt brake with 6085 and
-        # retain position lock. H02.07=4 is required for this vertical assembly.
-        return [(0x605D, 2, 2, True), (0x2002, 2, 4, False, 8)]
+        # SV635N manual p163 recommends H02.07=1 for a vertical axis: the
+        # physical overtravel input commands zero speed and retains position
+        # lock. Normal predictive software Halt still uses controlled 6085.
+        return [(0x605D, 2, 2, True), (0x2002, 2, 1, False, 8)]
 
     def stop_deceleration(self, axis, acceleration):
+        if acceleration == 0 and 'stop_deceleration_counts_s2' in axis:
+            return axis['stop_deceleration_counts_s2']
         value = round(axis['counts'] * self.controller.options['stop_deceleration_rpm_s']/60)
+        # A high-speed normal PP ramp must not be replaced by a much slower
+        # limit-stop ramp. The configured value is a minimum, so lowering the
+        # UI acceleration still cannot weaken the stopping floor.
+        value = max(value, acceleration)
+        if self.limit_halted and not self.stopped_after_limit():
+            value = max(value, axis.get('stop_deceleration_counts_s2', 0))
         if not 1 <= value <= 0xFFFFFFFF:
             raise ControlError('独立限位停车减速度超出驱动参数范围。')
+        axis['stop_deceleration_counts_s2'] = value
+        axis['report']['stop_deceleration_counts_s2'] = value
         return value
 
     def apply_profile(self):
@@ -247,6 +372,12 @@ class _NICSession(_ManualSession):
             centre_delta = displacement(centre, origin)
             low, high = centre_delta+minimum+margin, centre_delta+maximum-margin
         memory = self.controller.limit_memory.entry(self.controller.adapter, d)
+        manual = manual_bounds(memory.get('manual'), d)
+        if manual:
+            centre, minimum, maximum = manual
+            centre_delta = displacement(centre, origin)
+            low = centre_delta+minimum if low is None else max(low, centre_delta+minimum)
+            high = centre_delta+maximum if high is None else min(high, centre_delta+maximum)
         if 'positive' in memory:
             edge = displacement(memory['positive'], origin)-margin
             high = edge if high is None else min(high, edge)
@@ -254,7 +385,8 @@ class _NICSession(_ManualSession):
             edge = displacement(memory['negative'], origin)+margin
             low = edge if low is None else max(low, edge)
         if low is not None and high is not None and low >= high:
-            raise ControlError(f'电机 {d.order} 软限位空间不足或坐标失效，禁止运动。')
+            if not self.commands.ready:
+                raise ControlError(f'电机 {d.order} 限位位置记录冲突，请停机后“重置限位记录”或重新设置软限位。')
         return low, high
 
     def strict_limits(self):
@@ -267,11 +399,67 @@ class _NICSession(_ManualSession):
         low, high = self.travel_bounds(axis)
         current = axis.get('unwrapped_counts', 0)
         goal = current+remaining
-        return (sensor.get('positive_limit') and sensor.get('negative_limit')
+        return (low is None or high is None or low >= high
+                or axis.get('hold_direction', 0)*remaining > 0
+                or sensor.get('positive_limit') and sensor.get('negative_limit')
                 or sensor.get('positive_limit') and remaining > 0
                 or sensor.get('negative_limit') and remaining < 0
                 or high is not None and goal > high and remaining > 0
                 or low is not None and goal < low and remaining < 0)
+
+    def stopped_after_limit(self):
+        for axis in self.selected():
+            samples = axis.get('halt_samples', ())
+            if (len(samples) < 2 or samples[-1][0]-samples[0][0] < .05
+                    or not axis['last'][1] & 0x400
+                    or max(p for _, p in samples)-min(p for _, p in samples) > max(2, axis['counts']*.02/360)):
+                return False
+        return True
+
+    def next_request(self):
+        request = self.commands.pop()
+        if not self.limit_halted:
+            return request
+        if request is not None:
+            # Only a fresh, permitted target can survive a limit stop. A newer
+            # outward request also cancels a previously queued reverse request.
+            if any(self.blocked(a, round(a['counts']*v*a['direction_factor']/360)-a['unwrapped_counts'])
+                   for a, v in zip(self.selected(), request.targets)):
+                self.deferred_reverse = None
+                return request
+            self.deferred_reverse = request
+        if self.deferred_reverse is None or not self.stopped_after_limit():
+            return None
+        request, self.deferred_reverse = self.deferred_reverse, None
+        return request
+
+    def prepare_request(self, request):
+        if self.strict_limits():
+            return request
+        targets, changed = [], False
+        for axis, degrees in zip(self.selected(), request.targets):
+            goal = round(axis['counts']*degrees*axis['direction_factor']/360)
+            current = axis['unwrapped_counts']
+            low, high = self.travel_bounds(axis)
+            if low is not None and high is not None and low >= high:
+                return request  # Keep enable and hold; do not throw or clamp an invalid interval.
+            # The user's slider stays at the requested position. Only the
+            # drive's executable endpoint is bounded, so a far target moves
+            # smoothly toward the boundary instead of aborting where it is.
+            bounded = goal
+            if high is not None and current < high and goal > high:
+                bounded = math.floor(high)
+            if low is not None and current > low and goal < low:
+                bounded = math.ceil(low)
+            changed |= bounded != goal
+            targets.append(bounded*360/axis['counts']*axis['direction_factor'])
+        if changed:
+            self.report['target_clamps'] = self.report.get('target_clamps', 0)+1
+            if not self.limit_halted and all(round(a['counts']*value*a['direction_factor']/360)
+                    == a.get('command_goal') for a, value in zip(self.selected(), targets)):
+                return None  # Do not restart the same bounded PP trajectory on every mouse event.
+            return replace(request, targets=tuple(targets))
+        return request
 
     def interrupt_motion(self, request=None):
         if self.strict_limits():
@@ -280,23 +468,44 @@ class _NICSession(_ManualSession):
             for axis, degrees in zip(self.selected(), request.targets):
                 goal = round(axis['counts'] * degrees * axis['direction_factor'] / 360)
                 if self.blocked(axis, goal-axis['unwrapped_counts']):
+                    axis['stop_direction'] = 1 if goal > axis['unwrapped_counts'] else -1
                     self.limit_pending.add(axis['device'].order)
         if not self.limit_pending:
             return False
         orders = sorted(self.limit_pending)
         self.limit_pending.clear()
+        already_halted = self.limit_halted
         self.limit_halted = True
+        self.deferred_reverse = None
         positions = []
         for axis in self.selected():
+            if axis['device'].order in orders:
+                direction = axis.pop('stop_direction', 0)
+                if not direction:
+                    sensor = self.limits[axis['device'].order]
+                    if sensor['positive_limit'] != sensor['negative_limit']:
+                        direction = 1 if sensor['positive_limit'] else -1
+                if direction:
+                    axis['hold_direction'] = direction
+            if already_halted:
+                continue  # Never make the stop target follow ongoing coast motion.
             axis['cw'] = 0x10F  # Halt=1; enable-operation stays set; no new-setpoint edge.
             axis['target'] = axis['last'][2]
             axis['command_start'] = axis['command_goal'] = axis['unwrapped_counts']
             axis.pop('velocity_samples', None)
+            axis['halt_samples'] = deque([(time.monotonic(), axis['unwrapped_counts'])])
             positions.append(self.travel_degrees(axis))
-        self.commands.hold_at(positions)
+        if already_halted:
+            return True
+        self.commands.hold_at(positions, keep_requested=True)
         self.report['limit_holds'] = self.report.get('limit_holds', 0)+1
         conflict = any(self.limits[n]['positive_limit'] and self.limits[n]['negative_limit'] for n in orders)
         hint = '两端限位冲突，解除后需提交新目标' if conflict else '危险方向已锁存，可提交反向离开目标'
+        if any(low is None or high is None for low, high in (self.travel_bounds(a) for a in self.selected())):
+            hint = '缺少完整软行程，未执行运动；请关闭使能后设置实测软上限和下限'
+        if any(low is not None and high is not None and low >= high
+               for low, high in (self.travel_bounds(a) for a in self.selected())):
+            hint = '限位位置记录冲突，请关闭使能后重置限位记录或重新设置软限位'
         self.emit('limit_blocked', limits=dict(self.limits),
             axes=[dict(order=a['device'].order, position=a['last'][2],
                        enabled=bool(a['last'][1] & 4), fault=bool(a['last'][1] & 8),
@@ -312,6 +521,9 @@ class _NICSession(_ManualSession):
             # release Halt and raise new-setpoint in the SAME PDO, never resume
             # the discarded target first. tick() rechecks limits before sending.
             self.limit_halted = False
+            for axis in self.selected():
+                if axis.get('hold_direction', 0)*(axis['command_goal']-axis['unwrapped_counts']) < 0:
+                    axis.pop('hold_direction', None)
         super().command(word)
 
     def update_feedback(self, axis):
@@ -321,11 +533,18 @@ class _NICSession(_ManualSession):
         sensor = self.controller.limit_memory.protect(self.controller.adapter, d, axis['last'][2],
                                                      input_state(d, raw, error_code=axis['last'][0]))
         self.limits[d.order] = sensor
+        if self.limit_halted and axis['request']:
+            samples = axis.setdefault('halt_samples', deque())
+            now = time.monotonic()
+            samples.append((now, axis['unwrapped_counts']))
+            while len(samples) > 2 and samples[1][0] < now-.05:
+                samples.popleft()
         if self.cleaning or not axis['request']:
             return
         positive, negative = sensor['positive_limit'], sensor['negative_limit']
         if positive and negative:
             if not self.commands.ready or self.strict_limits():
+                self.travel_bounds(axis)  # Identify conflicting saved coordinates before physical-input errors.
                 raise ControlError(f'电机 {d.order} 两端限位同时触发，停止全部电机。')
             if not self.limit_halted:
                 self.limit_pending.add(d.order)
@@ -333,6 +552,10 @@ class _NICSession(_ManualSession):
             if self.strict_limits() and (positive or negative):
                 raise ControlError(f'电机 {d.order} 返回固定中位期间触发限位。')
             if self.limit_halted:
+                return
+            low, high = self.travel_bounds(axis)
+            if low is not None and high is not None and low >= high:
+                self.limit_pending.add(d.order)
                 return
             # Holding at enable or after arrival can jitter by a few counts.
             # Only an outstanding motion target can drive into an endpoint;
@@ -342,6 +565,7 @@ class _NICSession(_ManualSession):
             remaining = axis.get('command_goal', 0) - axis.get('unwrapped_counts', 0)
             if (positive and remaining > axis['tolerance'] or
                     negative and remaining < -axis['tolerance']):
+                axis['stop_direction'] = 1 if remaining > 0 else -1
                 self.limit_pending.add(d.order)
             # Predict the stop from measured encoder motion, including host/drive
             # reaction time and position margin. The drive's PP planner is the
@@ -361,6 +585,7 @@ class _NICSession(_ManualSession):
                     velocity_limit=axis['report']['profile_velocity_counts_s'])
                 if (velocity > 0 and high is not None and axis['unwrapped_counts']+braking >= high
                         or velocity < 0 and low is not None and axis['unwrapped_counts']-braking <= low):
+                    axis['stop_direction'] = 1 if velocity > 0 else -1
                     self.limit_pending.add(d.order)
 
     def tick(self, checked=True, cancellable=True):
@@ -381,6 +606,20 @@ class _NICSession(_ManualSession):
         super().tick(checked, cancellable)
 
     def emit(self, kind, **payload):
+        if kind=='continuous_ready' and hasattr(self.commands,'neutral_reference'):
+            # Permit small stationary centre offsets without redefining zero or
+            # expanding native travel bounds. No setpoint is issued here.
+            positions=[]
+            for row in self.commands.neutral_reference['axes']:
+                axis=next(a for a in self.selected() if a['device'].order==row['order'])
+                offset=displacement(axis['last'][2],row['position'])
+                axis.update(origin=row['position'],previous_position=axis['last'][2],
+                    unwrapped_counts=offset,command_start=offset,command_goal=offset)
+                positions.append(self.travel_degrees(axis))
+            self.commands.hold_at(positions)
+            if hasattr(self.commands,'output'):
+                with self.commands.lock:
+                    self.commands.output=tuple(positions)
         if kind == 'status':
             payload['limits'] = dict(self.limits)
         elif kind == 'continuous_ready' and hasattr(self.commands, 'fixed_reference'):

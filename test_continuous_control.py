@@ -10,6 +10,16 @@ from test_platform_control import FakeMaster
 
 
 class QueueTests(unittest.TestCase):
+    def test_limit_hold_can_discard_motion_without_rewriting_requested_slider(self):
+        commands = MotionQueue([1])
+        commands.mark_ready()
+        commands.submit([300])
+        commands.hold_at([10], keep_requested=True)
+        self.assertEqual(commands.target_state(), ((300,), 1))
+        self.assertIsNone(commands.pop())
+        commands.update_profile(30, 60)
+        self.assertIsNone(commands.pop())
+
     def test_profile_update_is_atomic_and_does_not_change_targets(self):
         commands = MotionQueue([1, 2])
         with self.assertRaises(ControlError):
@@ -95,6 +105,66 @@ class QueueTests(unittest.TestCase):
 
 
 class CommunicationTests(unittest.TestCase):
+    def test_cleanup_retries_individual_preop_when_one_slave_ignores_broadcast(self):
+        master=FakeMaster()
+        slave=master.slaves[2]
+        write=master.write_state
+        individual=[]
+        def broadcast():
+            write()
+            if master.state==2:
+                slave.state=4
+        master.write_state=broadcast
+        slave.write_state=lambda:individual.append(slave.state)
+        checks=[]
+        def state_check(*_):
+            checks.append(1)
+            if len(checks)==2:
+                raise RuntimeError('temporary state-check timeout')
+            return slave.state
+        slave.state_check=state_check
+        controller=EtherCATController('fake',master_factory=lambda:master)
+        stop=threading.Event()
+        def callback(event):
+            if event['kind']=='continuous_ready':
+                stop.set()
+        result=run_continuous(controller,controller.scan(),MotionQueue([1,2,3]),stop,callback)
+        self.assertTrue(result['all_disabled'])
+        self.assertTrue(result['all_disabled_sdo'])
+        self.assertTrue(result['all_preop'])
+        self.assertIn(2,individual)
+        self.assertGreaterEqual(len(checks),3)
+        self.assertNotIn('cleanup_errors',result)
+
+    def test_cleanup_uses_sdo_switch_off_without_a_fault_reset_when_pdo_disable_is_ignored(self):
+        master=FakeMaster()
+        slave=master.slaves[1]
+        exchange=slave.exchange
+        original_write=slave.sdo_write
+        switched_off=[]
+        stop=threading.Event()
+        def delayed_disable():
+            exchange()
+            if stop.is_set() and not switched_off:
+                slave.sw=0x27
+                slave.input=struct.pack('<HHi',0,slave.sw,slave.position)+bytes(20)
+        def sdo(index,sub,data):
+            if index==0x6040:
+                switched_off.append(int.from_bytes(data,'little'))
+                slave.sw=0x40
+            else:
+                original_write(index,sub,data)
+        slave.exchange,slave.sdo_write=delayed_disable,sdo
+        controller=EtherCATController('fake',master_factory=lambda:master)
+        def callback(event):
+            if event['kind']=='continuous_ready':
+                stop.set()
+        result=run_continuous(controller,controller.scan(),MotionQueue([1,2,3]),stop,callback)
+        self.assertFalse(result['all_disabled'])  # Preserve the failed PDO confirmation.
+        self.assertTrue(result['all_disabled_sdo'])
+        self.assertTrue(result['all_preop'])
+        self.assertEqual(switched_off,[0])
+
     def session(self):
         master = FakeMaster()
         controller = EtherCATController('fake', master_factory=lambda: master)

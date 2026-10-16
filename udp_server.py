@@ -145,7 +145,8 @@ class UDPServer:
                         if old_fingerprint != fingerprint:
                             raise ControlError('重复 id 的请求内容不同。')
                         return old_response
-                    if kind in ('scan', 'enable', 'release', 'save_reference', 'return_reference', 'configure_platform'):
+                    if kind in ('scan', 'enable', 'release', 'save_reference', 'return_reference', 'configure_platform',
+                                'reset_limits', 'configure_soft_limits'):
                         seq = packet.get('control_seq')
                         if type(seq) is not int or not 0 <= seq <= 2**53 - 1 or seq <= self.control_sequence:
                             raise ControlError('control_seq 必须严格递增；过期控制请求不能再次执行。')
@@ -154,6 +155,12 @@ class UDPServer:
                     self._remember_client(peer)
                     if kind == 'scan':
                         self.service.scan(packet.get('adapter'))
+                    elif kind == 'reset_limits':
+                        self.service.edit_limits(orders=packet.get('orders'))
+                    elif kind == 'configure_soft_limits':
+                        if not isinstance(packet.get('axes'), list) or not packet['axes']:
+                            raise ControlError('axes 必须是非空软限位设置数组。')
+                        self.service.edit_limits(settings=packet['axes'])
                     elif kind == 'save_reference':
                         self.service.save_reference(packet.get('physical_center_confirmed', False))
                     elif kind == 'return_reference':
